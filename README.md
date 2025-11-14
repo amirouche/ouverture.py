@@ -1,4 +1,4 @@
-# Ouverture
+# ouverture.py
 
 **Infrastructure for cognitive diversity in the post-LLM era**
 
