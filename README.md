@@ -168,6 +168,26 @@ The import is normalized to `from ouverture import abc123def`, making it languag
 
 French for "opening" or "overture" - the beginning of something larger. Also a nod to the multilingual nature of the project.
 
+## Origins & Vision
+
+This idea has been brewing for over a decade, long before the current LLM revolution. The core goals were:
+
+1. **Code as a reusable resource**: Write a function, store it, forget it, and retrieve it later—dependencies and all—without the hassle of reinventing wheels (e.g., the infamous leftpad incident or countless buried helper functions).
+
+2. **Lowering cognitive barriers**: Enable people to contribute to code without requiring English proficiency, aligning with the "think globally, act locally" ethos.
+
+### The Bigger Picture
+
+If Ouverture succeeds, it could become infrastructure like npmjs—but with **less friction, less drama, and fewer barriers**. The irony? The vision remains relevant even without LLMs. The core idea—content-addressable, multilingual code—stands on its own.
+
+**Key inspirations** that shaped this thinking:
+
+- **[Unison](https://www.unison-lang.org/)**: Content-addressable code where the hash is the identity
+- **[Abstract Wikipedia](https://meta.wikimedia.org/wiki/Abstract_Wikipedia)**: Multilingual knowledge representation that separates meaning from language
+- **Situated Software**: Local, contextual solutions that can scale globally
+
+This explains why the hash-on-logic-not-names design is so critical—it's not just a technical detail, it's the **enabler of the entire multilingual vision**. A French developer writing `calculer_somme(nombres)` and an English developer writing `calculate_sum(numbers)` are contributing the **same** function to the same pool.
+
 ## Architecture
 
 - **Single file**: `ouverture.py` (~600 lines)
@@ -214,10 +234,12 @@ MIT (see LICENSE file)
 ## Related Work
 
 - **Non-English-based programming languages**: [Wikipedia overview](https://en.wikipedia.org/wiki/Non-English-based_programming_languages) of programming languages designed for non-English speakers
-- Content-addressed storage: Git, IPFS
-- AST-based code similarity: Moss, JPlag
-- Multilingual programming: Racket's #lang system, Babylonian programming
-- Code normalization: Abstract interpretation, program synthesis
+- **Content-addressed storage**: Git, IPFS, Nix
+- **AST-based code similarity**: Moss, JPlag
+- **Multilingual programming**: Racket's #lang system, Babylonian programming
+- **Code normalization**: Abstract interpretation, program synthesis
+
+See the "Origins & Vision" section above for key inspirations (Unison, Abstract Wikipedia, Situated Software).
 
 ## Contact
 
