@@ -36,111 +36,113 @@ pytest -v
 pytest --cov=ouverture --cov-report=html
 ```
 
-### Run specific test class:
+### Run specific test by name pattern:
 
 ```bash
-pytest test_ouverture.py::TestASTNormalizer
+pytest -k "ast_normalizer"
 ```
 
 ### Run specific test:
 
 ```bash
-pytest test_ouverture.py::TestASTNormalizer::test_visit_name_with_mapping
+pytest test_ouverture.py::test_ast_normalizer_visit_name_with_mapping
 ```
 
 ## Test Structure
 
-The test suite is organized into the following test classes:
+**IMPORTANT**: All tests are implemented as functions, not classes. This follows pytest best practices and keeps tests simple and focused.
+
+The test suite includes the following test functions:
 
 ### Unit Tests
 
-1. **TestASTNormalizer** - Tests for the ASTNormalizer class
+1. **ASTNormalizer tests** (`test_ast_normalizer_*`)
    - Variable name transformation
    - Function argument renaming
    - Function definition renaming
 
-2. **TestCollectNames** - Tests for collect_names function
+2. **collect_names tests** (`test_collect_names_*`)
    - Collecting variable names
    - Collecting function names and arguments
 
-3. **TestGetImportedNames** - Tests for get_imported_names function
+3. **get_imported_names tests** (`test_get_imported_names_*`)
    - Import statement parsing
    - Import with aliases
    - From-import statements
 
-4. **TestCheckUnusedImports** - Tests for check_unused_imports function
+4. **check_unused_imports tests** (`test_check_unused_imports_*`)
    - Detecting used imports
    - Detecting unused imports
 
-5. **TestSortImports** - Tests for sort_imports function
+5. **sort_imports tests** (`test_sort_imports_*`)
    - Sorting import statements
    - Sorting from-import statements
    - Import ordering relative to code
 
-6. **TestExtractFunctionDef** - Tests for extract_function_def function
+6. **extract_function_def tests** (`test_extract_function_def_*`)
    - Extracting function definitions
    - Extracting imports
    - Error handling for missing/multiple functions
 
-7. **TestCreateNameMapping** - Tests for create_name_mapping function
+7. **create_name_mapping tests** (`test_create_name_mapping_*`)
    - Function name mapping to _ouverture_v_0
    - Sequential variable numbering
    - Built-in exclusion from renaming
    - Imported name exclusion
    - Ouverture alias exclusion
 
-8. **TestRewriteOuvertureImports** - Tests for rewrite_ouverture_imports function
+8. **rewrite_ouverture_imports tests** (`test_rewrite_ouverture_imports_*`)
    - Rewriting ouverture imports to couverture
    - Alias tracking and removal
    - Preservation of non-ouverture imports
 
-9. **TestReplaceOuvertureCalls** - Tests for replace_ouverture_calls function
+9. **replace_ouverture_calls tests** (`test_replace_ouverture_calls_*`)
    - Replacing aliased function calls
    - Transformation to HASH._ouverture_v_0 format
 
-10. **TestClearLocations** - Tests for clear_locations function
+10. **clear_locations tests** (`test_clear_locations_*`)
     - Clearing AST location information
 
-11. **TestExtractDocstring** - Tests for extract_docstring function
+11. **extract_docstring tests** (`test_extract_docstring_*`)
     - Extracting existing docstrings
     - Handling functions without docstrings
     - Multiline docstring support
 
-12. **TestNormalizeAST** - Tests for normalize_ast function
+12. **normalize_ast tests** (`test_normalize_ast_*`)
     - Simple function normalization
     - Import sorting during normalization
     - Ouverture import handling
 
-13. **TestComputeHash** - Tests for compute_hash function
+13. **compute_hash tests** (`test_compute_hash_*`)
     - Deterministic hashing
     - Hash format validation
     - Different code producing different hashes
 
-14. **TestSaveFunction** - Tests for save_function function
+14. **save_function tests** (`test_save_function_*`)
     - Saving new functions
     - Adding additional languages to existing functions
     - JSON file structure validation
 
-15. **TestReplaceDocstring** - Tests for replace_docstring function
+15. **replace_docstring tests** (`test_replace_docstring_*`)
     - Replacing existing docstrings
     - Adding docstrings to functions without them
     - Removing docstrings
 
-16. **TestDenormalizeCode** - Tests for denormalize_code function
+16. **denormalize_code tests** (`test_denormalize_code_*`)
     - Variable name denormalization
     - Ouverture import restoration
     - Function call restoration
 
 ### Integration Tests
 
-17. **TestAddFunction** - Integration tests for add_function CLI command
+17. **add_function tests** (`test_add_function_*`)
     - Error handling for missing language suffix
     - Error handling for invalid language codes
     - Error handling for missing files
     - Error handling for syntax errors
     - Successful function addition
 
-18. **TestGetFunction** - Integration tests for get_function CLI command
+18. **get_function tests** (`test_get_function_*`)
     - Error handling for missing language suffix
     - Error handling for invalid language codes
     - Error handling for invalid hash format
@@ -148,7 +150,7 @@ The test suite is organized into the following test classes:
     - Error handling for unavailable languages
     - Successful function retrieval
 
-19. **TestEndToEnd** - End-to-end integration tests
+19. **end-to-end tests** (`test_end_to_end_*`)
     - Roundtrip testing (add then get)
     - Multilingual function hashing (same logic = same hash)
 
