@@ -3,64 +3,64 @@
 This document tracks actionable items for Ouverture development.
 
 Context sources:
-- `FEATURES_LIMITATIONS.md` - Current capabilities and known limitations
+- `LIMITS.md` - Current capabilities and known limitations
 - `CLAUDE.md` - Technical architecture and development conventions (single-file design)
 - `README.md` - Project vision and philosophy
 
-## Completed Items
+## Priority 0: Git Remotes, async def / await Support, Compilation and Applications
 
-### Schema v1 Implementation ✅
-Complete implementation of the future-proof on-disk schema with content-addressed mappings, multiple language variants, extensible metadata, and migration tools. All 5 implementation phases completed with 105 passing tests.
+### Async/Await Support
+- Add support for `async def` functions (ast.AsyncFunctionDef)
+- Handle `await` expressions in normalization
+- Normalize async function names to `_ouverture_v_0` like regular functions
+- Document async function behavior and limitations
 
-**Details**: See [strategies/schema-v1.md](strategies/schema-v1.md) for comprehensive implementation strategy and checklist.
+### Git Remotes
+- Implement `ouverture.py remote add NAME git@host:user/repo.git` for Git SSH remotes
+- Implement `ouverture.py remote add NAME git+https://host/user/repo.git` for Git HTTPS remotes
+- Implement `ouverture.py remote add NAME git+file:///path/to/repo` for local Git remotes
+- Store functions in a Git repository structure compatible with ouverture pool format
+- Support authentication via SSH keys and Git credential helpers
+- Implement `remote pull` and `remote push` for Git remotes
 
-**Implemented features**:
-- Content-addressed language mappings with deduplication
-- Support for multiple mapping variants per language
-- Extensible metadata (author, timestamp, tags, dependencies)
-- Alternative hash algorithm support (sha256 foundation)
-- Schema version detection and backward compatibility
-- Migration tool (`ouverture.py migrate`) for v0 → v1
-- Validation tool (`ouverture.py validate`) for v1 functions
-- Mapping exploration (`ouverture.py show`) with selection menu
-- Comment field for mapping variant identification
+### Test Reorganization
+- Reorganize tests into directory structure based on CLI commands
+- Create `tests/` directory with subdirectory per command (e.g., `tests/add/`, `tests/show/`, `tests/run/`)
+- Each command directory contains test cases specific to that CLI command
+- Keep `test_ouverture.py` for complex internal tests (AST rewriting, on-disk schema validation, hash computation)
+- Add integration tests that exercise full CLI workflows
 
-## Priority 1: User Identity and Configuration
+### Compilation
+- Implement `ouverture.py compile HASH@lang` command to generate standalone executable
+- Use PyOxidizer to bundle Python interpreter with function and dependencies
+- Resolve and include all ouverture pool dependencies transitively
+- Generate platform-specific binaries (Linux, macOS, Windows)
+- Support `--output` flag to specify output path
 
-### Configuration System
-- Implement `ouverture.py init` command to initialize ouverture directory (default: `$HOME/.local/ouverture/`)
-- Create `~/.config/ouverture/config.yaml` for user settings (follows XDG Base Directory spec)
-- Implement `ouverture.py whoami username [USERNAME]` to set/get username
-- Implement `ouverture.py whoami email [EMAIL]` to set/get email
-- Implement `ouverture.py whoami public-key [URL]` to set/get public key location
-- Implement `ouverture.py whoami language [LANG...]` to set/get preferred languages
-- Store user identity in config for attribution
+### Applications
+- **p5py**: Port p5.js creative coding library to Python using ouverture for function sharing
+- **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
+- **todo-flask**: Reference todo application built with Flask demonstrating ouverture integration
 
-## Priority 2: Remote Repository System
+## Priority 1: Remote HTTP/HTTPS Support
 
-### Remote Management
-- Implement `ouverture.py remote add NAME URL` for HTTP/HTTPS remotes
-- Implement `ouverture.py remote add NAME file:///path/to/win.sqlite` for SQLite remotes
-- Implement `ouverture.py remote remove NAME` to remove remotes
-- Implement `ouverture.py remote pull NAME` to fetch functions from remote
-- Implement `ouverture.py remote push NAME` to publish functions to remote
-- Store remote configuration in `~/.config/ouverture/config.yaml`
-- Support multiple remotes with priority/fallback
-
-### Remote Storage Backends
-- Design SQLite schema for local/file-based remotes
+### HTTP/HTTPS Remotes
 - Implement HTTP API client for HTTP/HTTPS remotes
+- Add `ouverture.py remote add NAME URL` support for HTTP/HTTPS URLs
 - Add authentication/authorization for push operations
 - Implement conflict resolution for remote operations
 - Add caching layer for remote fetches
 
-## Priority 3: Enhanced CLI Commands
+### Remote Storage Backends (Advanced)
+- Design SQLite schema for local/file-based remotes
+- Support multiple remotes with priority/fallback
 
-### Function Discovery
-- Implement `ouverture.py log [NAME | URL]` to show git-like commit log of pool/remote
-- Implement `ouverture.py search [NAME | URL] [QUERY...]` to search and list functions
-- Add filtering by language, author, date
+## Priority 2: Search and Discovery Improvements
+
+### Search Filtering
+- Add filtering by language, author, date to `search` command
 - Display function statistics (downloads, ratings if available)
+- Implement `ouverture.py log [NAME | URL]` to show log of specific remote
 
 ### Search Indexing (Performance Enhancement)
 - Implement local index for faster search operations
@@ -81,29 +81,7 @@ Complete implementation of the future-proof on-disk schema with content-addresse
   - Index should be optional (search works without it, just slower)
   - Consider memory-mapped index for large repositories (10,000+ functions)
 
-### Function Operations
-- Implement `ouverture.py translate HASH@LANG LANG` to add translation to existing function
-- Implement `ouverture.py review HASH` to recursively review function and dependencies (in user's preferred languages)
-- Implement `ouverture.py run HASH@lang` to execute function interactively
-- Keep existing `ouverture.py add FILENAME.py@LANG` command
-- Update `ouverture.py get HASH[@LANG] FILENAME.py` to save retrieved function to file
-
-## Priority 4: Native Language Debugging
-
-### Traceback Localization
-- Implement traceback rewriting to show native language variable names
-- When exception occurs, map `_ouverture_v_X` back to original names
-- Show both normalized and native language versions of traceback
-- Preserve line numbers from original source
-
-### Interactive Debugger Integration
-- Integrate with Python debugger (pdb)
-- Show variables in native language during debugging
-- Allow setting breakpoints using native language names
-- Implement `ouverture.py run HASH@lang --debug` for interactive debugging
-- Support stepping through code with native language context
-
-## Priority 5: Code Quality
+## Priority 3: Code Quality
 
 ### Documentation
 - Create `docs/API.md` with Python API documentation
@@ -116,10 +94,16 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Create `pyproject.toml` for modern Python packaging
 - Add entry point: `ouverture` command
 - Test `pip install -e .` works correctly
+- Publish to pypi.org
 - Add mypy type checking configuration
 - Add ruff linting configuration
 
-## Priority 6: Testing Improvements
+### Distribution
+- Integrate with PyOxidizer for standalone binary distribution
+- Create platform-specific binaries (Linux, macOS, Windows)
+- Set up automated release pipeline
+
+## Priority 4: Testing Improvements
 
 ### Property-Based Testing
 - Implement normalization idempotence tests with Hypothesis
@@ -147,7 +131,7 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Mark known issues with `@pytest.mark.xfail`
 - Add regression test suite for bug fixes
 
-## Priority 7: Semantic Understanding
+## Priority 5: Semantic Understanding
 
 ### Short Term (6 months)
 - Implement basic pattern matching for top 10 equivalent patterns (sum() vs loop, etc.)
@@ -167,7 +151,7 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Implement hybrid syntactic → pattern → execution → ML pipeline
 - Add cross-language semantic matching (Python ≡ JavaScript)
 
-## Priority 8: Core Features
+## Priority 6: Core Features
 
 ### Language Support
 - Extend language codes beyond 3 characters to support any string <256 chars
@@ -194,7 +178,22 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Add `--version` flag
 - Improve error messages with suggestions
 
-## Priority 9: Infrastructure (Microlibrary Vision)
+## Priority 7: Native Language Debugging
+
+### Traceback Localization
+- Implement traceback rewriting to show native language variable names
+- When exception occurs, map `_ouverture_v_X` back to original names
+- Show both normalized and native language versions of traceback
+- Preserve line numbers from original source
+
+### Interactive Debugger Integration
+- Integrate with Python debugger (pdb)
+- Show variables in native language during debugging
+- Allow setting breakpoints using native language names
+- Implement `ouverture.py run HASH@lang --debug` for interactive debugging
+- Support stepping through code with native language context
+
+## Priority 8: Infrastructure (Microlibrary Vision)
 
 ### Phase 1: Centralized Registry (Months 4-6)
 - Design HTTP API for function registry
@@ -204,7 +203,6 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Implement search by hash, signature, description
 - Add `ouverture publish` command
 - Add `ouverture pull` command from registry
-- Add `ouverture search` command
 - Create basic web UI for browsing
 
 ### Phase 2: Community Features (Months 7-9)
@@ -229,7 +227,7 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Implement registry priority and fallback
 - Add semantic search with ML embeddings
 
-## Priority 10: Research
+## Priority 9: Research
 
 ### Experiments to Run
 - Benchmark Top 100 equivalent patterns in real Python codebases
@@ -248,7 +246,7 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Write paper on impact of native-language programming on comprehension
 - Write paper on multilingual code sharing infrastructure
 
-## Priority 11: Documentation
+## Priority 10: Documentation
 
 ### User Documentation
 - Document workarounds for unsupported features (classes, globals, etc.)
@@ -264,26 +262,7 @@ Complete implementation of the future-proof on-disk schema with content-addresse
 - Document plugin system design (future)
 - Create architecture decision records (ADRs)
 
-## Priority 12: Cross-Language Support
-
-### JavaScript Support
-- Implement JavaScript AST normalization
-- Map JavaScript constructs to canonical form
-- Handle differences in type systems
-- Test multilingual equivalence: Python ↔ JavaScript
-
-### Rust Support
-- Implement Rust AST normalization (harder due to type system)
-- Map Rust constructs to canonical form
-- Handle lifetime annotations
-- Test multilingual equivalence: Python ↔ Rust
-
-### Universal IR (Long Term)
-- Design language-independent intermediate representation
-- Map Python, JavaScript, Rust to IR
-- Compute hash on IR (true cross-language equivalence)
-
-## Priority 13: Production Readiness
+## Priority 11: Production Readiness
 
 ### Security
 - Implement static analysis for dangerous patterns (eval, exec, os.system)
