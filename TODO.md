@@ -59,8 +59,14 @@ Context sources:
 - Create `pyproject.toml` for modern Python packaging
 - Add entry point: `ouverture` command
 - Test `pip install -e .` works correctly
+- Publish to pypi.org
 - Add mypy type checking configuration
 - Add ruff linting configuration
+
+### Distribution
+- Integrate with PyOxidizer for standalone binary distribution
+- Create platform-specific binaries (Linux, macOS, Windows)
+- Set up automated release pipeline
 
 ## Priority 4: Testing Improvements
 
@@ -137,7 +143,22 @@ Context sources:
 - Add `--version` flag
 - Improve error messages with suggestions
 
-## Priority 7: Infrastructure (Microlibrary Vision)
+## Priority 7: Native Language Debugging
+
+### Traceback Localization
+- Implement traceback rewriting to show native language variable names
+- When exception occurs, map `_ouverture_v_X` back to original names
+- Show both normalized and native language versions of traceback
+- Preserve line numbers from original source
+
+### Interactive Debugger Integration
+- Integrate with Python debugger (pdb)
+- Show variables in native language during debugging
+- Allow setting breakpoints using native language names
+- Implement `ouverture.py run HASH@lang --debug` for interactive debugging
+- Support stepping through code with native language context
+
+## Priority 8: Infrastructure (Microlibrary Vision)
 
 ### Phase 1: Centralized Registry (Months 4-6)
 - Design HTTP API for function registry
@@ -171,7 +192,7 @@ Context sources:
 - Implement registry priority and fallback
 - Add semantic search with ML embeddings
 
-## Priority 8: Research
+## Priority 9: Research
 
 ### Experiments to Run
 - Benchmark Top 100 equivalent patterns in real Python codebases
@@ -190,7 +211,7 @@ Context sources:
 - Write paper on impact of native-language programming on comprehension
 - Write paper on multilingual code sharing infrastructure
 
-## Priority 9: Documentation
+## Priority 10: Documentation
 
 ### User Documentation
 - Document workarounds for unsupported features (classes, globals, etc.)
@@ -206,7 +227,7 @@ Context sources:
 - Document plugin system design (future)
 - Create architecture decision records (ADRs)
 
-## Priority 10: Cross-Language Support
+## Priority 11: Cross-Language Support
 
 ### JavaScript Support
 - Implement JavaScript AST normalization
@@ -225,7 +246,7 @@ Context sources:
 - Map Python, JavaScript, Rust to IR
 - Compute hash on IR (true cross-language equivalence)
 
-## Priority 11: Production Readiness
+## Priority 12: Production Readiness
 
 ### Security
 - Implement static analysis for dangerous patterns (eval, exec, os.system)
