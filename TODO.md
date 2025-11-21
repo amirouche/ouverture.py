@@ -29,11 +29,12 @@ Context sources:
 - Store array of mappings rather than single mapping per language
 
 ### Content-Addressed Mappings
-- Hash the content of each name/alias mapping
-- Store mappings by hash: `.ouverture/mappings/XX/YYYYYY.json`
-- Reference mappings from function metadata by hash
-- Deduplication: identical mappings across functions stored once
-- Structure: `{mapping_hash, lang, name_mapping, alias_mapping}`
+- Hash the content of each name/alias mapping (docstring + name_mapping + alias_mapping)
+- Store mappings within function directory: `.ouverture/objects/ab/c123.../lang-code/XX/YYYYYY.json`
+- No hash references in object.json - mappings discovered by scanning language directories
+- Deduplication: identical mappings share same hash/file within language directory
+- Structure: `{docstring, name_mapping, alias_mapping}`
+- All function data grouped in single directory for easy management
 
 ### Schema Versioning and Migration
 - Implement schema version migration strategy
@@ -60,45 +61,54 @@ Context sources:
 - Store encoding type in metadata: `encoding: "gzip" | "none"`
 - Transparent decompression on load
 
-### Proposed Schema v1
+### Proposed Schema v1 - Directory Structure
+
+```
+.ouverture/objects/
+  ab/                                    # First 2 chars of function hash
+    c123def456.../                       # Function directory (remaining hash chars)
+      object.json                        # Core function data (no language data)
+      eng/                               # Language code directory
+        xy/                              # First 2 chars of mapping hash
+          z789.../mapping.json          # Complete mapping for this variant
+        ab/
+          cdef.../mapping.json          # Another variant for eng
+      fra-canadian/                      # Another language (up to 256 chars)
+        mn/
+          opqr.../mapping.json
+```
+
+### object.json (minimal - no duplication)
 
 ```json
 {
   "schema_version": 1,
-  "hash": "abc123...",
+  "hash": "abc123def456...",
   "hash_algorithm": "sha256",
-  "normalized_code": "...",
+  "normalized_code": "def _ouverture_v_0(...):\n    ...",
   "encoding": "none",
   "metadata": {
     "created": "2025-11-21T10:00:00Z",
     "author": "username",
     "tags": ["math", "statistics"],
     "dependencies": ["def456...", "ghi789..."]
-  },
-  "languages": {
-    "eng": {
-      "docstring": "...",
-      "mappings": ["mapping_hash_1", "mapping_hash_2"]
-    },
-    "fra-canadian": {
-      "docstring": "...",
-      "mappings": ["mapping_hash_3"]
-    }
   }
 }
 ```
 
-### Mapping Storage (Separate Files)
+**No language-specific data** - docstrings, name_mappings, alias_mappings live only in mapping.json files
+
+### mapping.json (in lang-code/XX/YYY.../mapping.json)
 
 ```json
 {
-  "mapping_hash": "xyz789...",
-  "lang": "eng",
-  "variant": "formal",
-  "name_mapping": {"_ouverture_v_0": "calculate_average", ...},
+  "docstring": "Calculate the average of a list of numbers",
+  "name_mapping": {"_ouverture_v_0": "calculate_average", "_ouverture_v_1": "numbers"},
   "alias_mapping": {"abc123": "helper"}
 }
 ```
+
+Mapping files are content-addressed by hashing their content, enabling deduplication across functions.
 
 ### Implementation Plan
 - Design schema v1 with all future-proofing features

@@ -151,10 +151,48 @@ Functions are stored in `.ouverture/objects/XX/YYYYYY.json` where XX is the firs
 
 #### Future Schema (v1) - Planned
 
-See `TODO.md` Priority 0 for the comprehensive redesign plan. Key improvements:
+See `TODO.md` Priority 0 for the comprehensive redesign plan.
+
+**Directory Structure:**
+```
+.ouverture/objects/
+  ab/c123def456.../              # Function directory
+    object.json                  # Core function data (no language data)
+    eng/xy/z789.../mapping.json  # Language mapping (content-addressed)
+    fra/mn/opqr.../mapping.json  # Another language/variant
+```
+
+**object.json** (minimal - no duplication):
+```json
+{
+  "schema_version": 1,
+  "hash": "abc123...",
+  "hash_algorithm": "sha256",
+  "normalized_code": "...",
+  "encoding": "none",
+  "metadata": {
+    "created": "2025-11-21T10:00:00Z",
+    "author": "username",
+    "tags": ["math", "statistics"],
+    "dependencies": ["def456...", "ghi789..."]
+  }
+}
+```
+
+**mapping.json** (in lang-code/XX/YYY.../):
+```json
+{
+  "docstring": "Calculate the average...",
+  "name_mapping": {"_ouverture_v_0": "calculate_average", ...},
+  "alias_mapping": {"abc123": "helper"}
+}
+```
+
+Key improvements:
 - Language identifiers up to 256 characters
-- Multiple mappings per language (array of mapping hashes)
-- Content-addressed mapping storage (separate files, deduplicated)
+- Multiple mappings per language via multiple mapping.json files
+- Content-addressed mapping storage (deduplicated across functions)
+- No duplication between object.json and mapping.json
 - Extensible metadata (author, timestamp, tags, dependencies)
 - Alternative hash algorithms support
 - Optional compression
