@@ -129,18 +129,44 @@ $HOME/.local/ouverture/
 - Transforms: `alias(...)` → `HASH._ouverture_v_0(...)`
 - Uses alias_mapping to determine which names are ouverture functions
 
-#### `hash_compute(code)` (lines 321-323)
-**Generates SHA256 hash**
+#### `hash_compute(code, algorithm='sha256')` (lines 321-335)
+**Generates hash using specified algorithm**
 - CRITICAL: Hash computed on code **WITHOUT docstring**
 - Ensures same logic = same hash across languages
+- **algorithm** parameter supports future hash algorithms (currently only 'sha256')
+- Default algorithm: 'sha256' (64-character hex output)
 
-#### `function_save(hash_value, lang, ...)` (lines 326-362)
-**Stores function in content-addressed pool**
+#### `mapping_compute_hash(docstring, name_mapping, alias_mapping, comment='')` (lines 338-371)
+**Computes content-addressed hash for language mappings** (Schema v1)
+- Creates canonical JSON from mapping components (sorted keys, no whitespace)
+- Includes comment field in hash to distinguish variants
+- Enables deduplication: identical mappings share same hash/storage
+- Returns: 64-character hex SHA256 hash
+
+#### `schema_detect_version(func_hash)` (lines 374-406)
+**Detects schema version of stored function**
+- Checks filesystem to determine v0 or v1 format
+- v0: `XX/YYYYYY.json` (single JSON file)
+- v1: `XX/YYYYYY.../object.json` (directory with object.json)
+- Returns: 0 (v0), 1 (v1), or None (not found)
+- Used for backward-compatible reading
+
+#### `metadata_create()` (lines 409-435)
+**Generates default metadata for functions** (Schema v1)
+- ISO 8601 timestamp (`created` field)
+- Author from environment (USER or USERNAME)
+- Empty `tags` and `dependencies` lists
+- Returns: Dictionary with metadata structure
+- Used when saving functions to v1 format
+
+#### `function_save(hash_value, lang, ...)` (lines 451-487)
+**Stores function in content-addressed pool** (Schema v0)
 - Path: `$OUVERTURE_DIRECTORY/objects/XX/YYYYYY.json` (default: `$HOME/.local/ouverture/`, XX = first 2 chars of hash)
 - Merges with existing data if hash already exists
 - Stores per-language: docstrings, name_mappings, alias_mappings
+- **Note**: This is the v0 format. Will be renamed to `function_save_v0()` in Phase 2
 
-#### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 364-429)
+#### `code_denormalize(normalized_code, name_mapping, alias_mapping)` (lines 490-555)
 **Reconstructs original-looking code**
 - Reverses variable renaming: `_ouverture_v_X → original_name`
 - Rewrites imports: `from ouverture.pool import X` → `from ouverture.pool import X as alias` (restores alias)
