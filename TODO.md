@@ -227,26 +227,7 @@ Context sources:
 - Document plugin system design (future)
 - Create architecture decision records (ADRs)
 
-## Priority 11: Cross-Language Support
-
-### JavaScript Support
-- Implement JavaScript AST normalization
-- Map JavaScript constructs to canonical form
-- Handle differences in type systems
-- Test multilingual equivalence: Python ↔ JavaScript
-
-### Rust Support
-- Implement Rust AST normalization (harder due to type system)
-- Map Rust constructs to canonical form
-- Handle lifetime annotations
-- Test multilingual equivalence: Python ↔ Rust
-
-### Universal IR (Long Term)
-- Design language-independent intermediate representation
-- Map Python, JavaScript, Rust to IR
-- Compute hash on IR (true cross-language equivalence)
-
-## Priority 12: Production Readiness
+## Priority 11: Production Readiness
 
 ### Security
 - Implement static analysis for dangerous patterns (eval, exec, os.system)
