@@ -679,8 +679,14 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     return ast.unparse(tree)
 
 
-def function_add(file_path_with_lang: str):
-    """Add a function to the ouverture pool"""
+def function_add(file_path_with_lang: str, comment: str = ""):
+    """
+    Add a function to the ouverture pool using schema v1.
+
+    Args:
+        file_path_with_lang: File path with language suffix (e.g., "file.py@eng")
+        comment: Optional comment explaining this mapping variant
+    """
     # Parse the path and language
     if '@' not in file_path_with_lang:
         print("Error: Missing language suffix. Use format: path/to/file.py@lang", file=sys.stderr)
@@ -718,8 +724,8 @@ def function_add(file_path_with_lang: str):
     # Compute hash on code WITHOUT docstring (so same logic = same hash regardless of language)
     hash_value = hash_compute(normalized_code_without_docstring)
 
-    # Save to JSON (store the version WITH docstring for display purposes)
-    function_save(hash_value, lang, normalized_code_with_docstring, docstring, name_mapping, alias_mapping)
+    # Save to v1 format (store the version WITH docstring for display purposes)
+    function_save(hash_value, lang, normalized_code_with_docstring, docstring, name_mapping, alias_mapping, comment)
 
 
 def docstring_replace(code: str, new_docstring: str) -> str:
@@ -850,6 +856,7 @@ def main():
     # Add command
     add_parser = subparsers.add_parser('add', help='Add a function to the pool')
     add_parser.add_argument('file', help='Path to Python file with @lang suffix (e.g., file.py@eng)')
+    add_parser.add_argument('--comment', default='', help='Optional comment explaining this mapping variant')
 
     # Get command
     get_parser = subparsers.add_parser('get', help='Get a function from the pool')
@@ -858,7 +865,7 @@ def main():
     args = parser.parse_args()
 
     if args.command == 'add':
-        function_add(args.file)
+        function_add(args.file, args.comment)
     elif args.command == 'get':
         function_get(args.hash)
     else:
