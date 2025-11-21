@@ -9,11 +9,15 @@ This document outlines the strategy for implementing the Priority 0 items from T
 2. **Git Remotes** - Git-based remote storage (SSH, HTTPS, local)
 3. **Test Reorganization** - Restructure tests by CLI command
 4. **Compilation** - Generate standalone executables with PyOxidizer
-5. **Applications** - Reference applications (p5py, asyncify, todo-flask)
 
-**Estimated total effort**: 25-35 days
+**Key Design Decisions**:
+- Git operations use `subprocess.run()` with git CLI (no gitpython/dulwich dependency)
+- Compilation targets host platform only (no cross-compilation)
+- Applications (p5py, asyncify, todo-flask) deferred to future work
 
-**Recommended order**: Test Reorganization → Async/Await → Git Remotes → Compilation → Applications
+**Estimated total effort**: 20-25 days
+
+**Recommended order**: Test Reorganization → Async/Await → Git Remotes → Compilation
 
 ---
 
@@ -126,28 +130,39 @@ repository/
 ### Implementation Phases
 
 #### Phase G1: Git Integration Foundation (Day 1-2)
-**Goal**: Basic Git operations
+**Goal**: Basic Git operations using subprocess.run()
+
+**Design Decision**: Use `subprocess.run()` with the git CLI instead of gitpython or dulwich. This:
+- Eliminates external dependencies
+- Leverages user's existing git configuration and credentials
+- Provides full git functionality without wrapper limitations
 
 **New Functions**:
-1. `git_clone_or_open(remote_url, local_path) -> Repo`
-   - Clone if not exists, open if exists
+1. `git_run(args, cwd=None) -> subprocess.CompletedProcess`
+   - Execute git command via subprocess.run()
+   - Handle errors and timeouts
+   - Return CompletedProcess for output parsing
+
+2. `git_clone_or_fetch(remote_url, local_path) -> bool`
+   - Clone if not exists: `git clone <url> <path>`
+   - Fetch if exists: `git -C <path> fetch origin`
    - Support SSH, HTTPS, and file:// URLs
 
-2. `git_url_parse(url) -> dict`
+3. `git_url_parse(url) -> dict`
    - Parse `git@host:user/repo.git` format
    - Parse `git+https://host/user/repo.git` format
    - Parse `git+file:///path/to/repo` format
    - Return: `{protocol, host, path, auth_method}`
 
-3. `remote_type_detect(url) -> str`
+4. `remote_type_detect(url) -> str`
    - Detect remote type: `file`, `git-ssh`, `git-https`, `git-file`, `http`, `https`
 
-**Dependencies**:
-- `gitpython` library (or `dulwich` for pure Python)
+**Dependencies**: None (uses system git)
 
 **Testing**:
 - Unit test: Parse various Git URL formats
 - Unit test: Detect remote type correctly
+- Integration test: git_run() executes commands correctly
 
 #### Phase G2: Pull Implementation (Day 3-4)
 **Goal**: Fetch functions from Git remotes
@@ -196,36 +211,35 @@ copy files to cache → git add → git commit → git push
 - Integration test: Handle push conflicts (pull first)
 
 #### Phase G4: Authentication (Day 7)
-**Goal**: Support various authentication methods
+**Goal**: Leverage system git authentication
 
-**Authentication methods**:
-1. **SSH keys**: Use system SSH agent or specified key
-2. **HTTPS credentials**: Git credential helpers
-3. **Token-based**: GitHub/GitLab personal access tokens
+**Design Decision**: Use system git for authentication rather than implementing custom auth handling. This:
+- Uses user's existing SSH keys via ssh-agent
+- Uses git credential helpers (configured via `git config`)
+- Supports all auth methods git supports (tokens, OAuth, etc.)
+- Requires zero custom configuration in ouverture
 
-**New Functions**:
-1. `git_credentials_get(remote_url) -> dict`
-   - Query Git credential helper
-   - Support `GIT_ASKPASS` environment variable
+**Authentication methods** (all handled by system git):
+1. **SSH keys**: System SSH agent automatically used
+2. **HTTPS credentials**: Git credential helpers (osxkeychain, libsecret, etc.)
+3. **Token-based**: Via credential helpers or URL embedding
 
-**Configuration**:
+**No custom auth functions needed** - git handles everything.
+
+**Configuration** (simple - just the URL):
 ```json
 {
   "remotes": {
     "origin": {
-      "url": "git@github.com:user/pool.git",
-      "auth": {
-        "method": "ssh-key",
-        "key_path": "~/.ssh/id_ed25519"
-      }
+      "url": "git@github.com:user/pool.git"
     }
   }
 }
 ```
 
 **Testing**:
-- Integration test: SSH key authentication
-- Integration test: HTTPS with credential helper
+- Integration test: SSH authentication (uses system SSH)
+- Integration test: HTTPS with credential helper (uses system git config)
 
 #### Phase G5: Conflict Resolution (Day 8)
 **Goal**: Handle conflicts gracefully
@@ -241,7 +255,7 @@ copy files to cache → git add → git commit → git push
 - Integration test: Concurrent modifications
 - Integration test: Conflict detection and warning
 
-**Risks**: Medium - Git operations can be complex
+**Risks**: Low-Medium - Using subprocess.run() with git CLI is straightforward; complexity is in handling edge cases
 
 **Estimated effort**: 8 days
 
@@ -357,18 +371,15 @@ tests/
 ### Target State
 
 ```bash
-# Generate standalone executable
+# Generate standalone executable for current platform
 ouverture.py compile abc123...@eng --output ./myapp
 
 # Run the executable
 ./myapp
 # Prompts for function arguments, executes, returns result
-
-# Platform-specific outputs
-./myapp           # Linux
-./myapp.exe       # Windows
-./myapp.app       # macOS (optional)
 ```
+
+**Design Decision**: Host-only compilation (no cross-compilation). Users compile on the target platform.
 
 ### Implementation Phases
 
@@ -427,27 +438,7 @@ if __name__ == "__main__":
 - Integration test: Compile function with dependencies
 - Integration test: Run compiled executable
 
-#### Phase C3: Cross-Platform Support (Day 6-7)
-**Goal**: Generate platform-specific binaries
-
-**Platforms**:
-1. Linux (x86_64, aarch64)
-2. macOS (x86_64, arm64)
-3. Windows (x86_64)
-
-**CLI Options**:
-```bash
-ouverture.py compile HASH@lang --platform linux-x86_64
-ouverture.py compile HASH@lang --platform macos-arm64
-ouverture.py compile HASH@lang --platform windows-x86_64
-ouverture.py compile HASH@lang  # Default: current platform
-```
-
-**Testing**:
-- Integration test: Compile for current platform
-- Manual test: Cross-compilation (requires CI/CD)
-
-#### Phase C4: Documentation (Day 8)
+#### Phase C3: Documentation (Day 6)
 **Goal**: Document compilation workflow
 
 **Deliverables**:
@@ -455,106 +446,17 @@ ouverture.py compile HASH@lang  # Default: current platform
 - Update README.md with compilation examples
 - Add troubleshooting section
 
-**Risks**: High - PyOxidizer complexity, cross-platform issues
+**Risks**: Medium - PyOxidizer complexity
 
 **Dependencies**:
 - PyOxidizer installation
 - Rust toolchain (for PyOxidizer)
-- Platform-specific SDKs for cross-compilation
 
-**Estimated effort**: 8 days
-
----
-
-## 5. Applications
-
-### Overview
-
-Reference applications demonstrating ouverture integration:
-
-1. **p5py** - Creative coding library (p5.js port)
-2. **asyncify** - Sync-to-async code transformer
-3. **todo-flask** - Reference Flask todo application
-
-### p5py Application
-
-**Goal**: Port p5.js creative coding API to Python using ouverture for function sharing
-
-**Scope**:
-- Core drawing functions (circle, rect, line, etc.)
-- Color management
-- Event handling (mouse, keyboard)
-- Basic transforms
-
-**Implementation**:
-1. Create `examples/p5py/` directory
-2. Implement core functions as ouverture-compatible functions
-3. Create launcher that loads functions from pool
-4. Document usage and examples
-
-**Estimated effort**: 5-7 days
-
-### asyncify Application
-
-**Goal**: Tool for rewriting synchronous Python code to async/await
-
-**Use case**:
-```python
-# Input (sync)
-def fetch_all(urls):
-    results = []
-    for url in urls:
-        response = requests.get(url)
-        results.append(response.json())
-    return results
-
-# Output (async)
-async def fetch_all(urls):
-    results = []
-    for url in urls:
-        response = await aiohttp.get(url)
-        results.append(await response.json())
-    return results
-```
-
-**Implementation**:
-1. AST-based transformation
-2. Library mapping (requests → aiohttp, etc.)
-3. CLI interface: `asyncify input.py output.py`
-4. Integration with ouverture (transform functions in pool)
-
-**Estimated effort**: 4-5 days
-
-### todo-flask Application
-
-**Goal**: Reference todo application demonstrating ouverture integration
-
-**Features**:
-- CRUD operations for todos
-- REST API with Flask
-- Functions stored in ouverture pool
-- Multilingual support (English, French, Spanish)
-
-**Structure**:
-```
-examples/todo-flask/
-├── app.py              # Flask app (imports from ouverture pool)
-├── requirements.txt
-├── README.md
-└── functions/          # Source functions before adding to pool
-    ├── todo_create.py
-    ├── todo_read.py
-    ├── todo_update.py
-    └── todo_delete.py
-```
-
-**Estimated effort**: 3-4 days
-
-**Total applications effort**: 12-16 days
+**Estimated effort**: 6 days
 
 ---
 
-## 6. Implementation Order
+## 5. Implementation Order
 
 ### Recommended Sequence
 
@@ -565,38 +467,33 @@ Week 2-3: Async/Await Support (3 days)
     ↓
 Week 3-4: Git Remotes (8 days)
     ↓
-Week 5-6: Compilation (8 days)
-    ↓
-Week 7-9: Applications (12-16 days)
+Week 5:   Compilation (6 days)
 ```
 
 ### Rationale
 
 1. **Test Reorganization first**: Clean test structure makes subsequent development easier and more confident
 
-2. **Async/Await second**: Small, self-contained feature that unblocks application development (asyncify requires this)
+2. **Async/Await second**: Small, self-contained feature; good warm-up before larger features
 
 3. **Git Remotes third**: Core infrastructure for sharing functions across teams/projects
 
 4. **Compilation fourth**: Enables distribution of ouverture functions as standalone tools
 
-5. **Applications last**: Demonstrate all features together, serve as integration tests
-
 ---
 
-## 7. Risk Assessment
+## 6. Risk Assessment
 
 | Feature | Risk Level | Key Risks | Mitigation |
 |---------|------------|-----------|------------|
 | Async/Await | Low | AST handling edge cases | Comprehensive tests |
-| Git Remotes | Medium | Authentication complexity, merge conflicts | Use gitpython, extensive testing |
+| Git Remotes | Low-Medium | Edge cases in git output parsing | Use subprocess.run(), leverage system git auth |
 | Test Reorganization | Low | Test discovery issues | Incremental migration, verify CI |
-| Compilation | High | PyOxidizer complexity, cross-platform | Start with single platform, expand |
-| Applications | Medium | Scope creep, maintenance burden | Define MVP scope clearly |
+| Compilation | Medium | PyOxidizer complexity | Host-only compilation, good documentation |
 
 ---
 
-## 8. Success Criteria
+## 7. Success Criteria
 
 ### Per-Feature Criteria
 
@@ -607,8 +504,8 @@ Week 7-9: Applications (12-16 days)
 
 **Git Remotes**:
 - [ ] Push/pull works with local Git repo
-- [ ] SSH authentication works
-- [ ] HTTPS authentication works
+- [ ] SSH authentication works (via system git)
+- [ ] HTTPS authentication works (via system git)
 
 **Test Reorganization**:
 - [ ] All tests pass in new structure
@@ -616,14 +513,9 @@ Week 7-9: Applications (12-16 days)
 - [ ] Documentation updated
 
 **Compilation**:
-- [ ] Simple function compiles on Linux
+- [ ] Simple function compiles on host platform
 - [ ] Compiled executable runs correctly
 - [ ] Dependencies resolved transitively
-
-**Applications**:
-- [ ] Each application has working demo
-- [ ] Documentation complete
-- [ ] Examples in pool
 
 ### Overall Criteria
 
@@ -634,22 +526,21 @@ Week 7-9: Applications (12-16 days)
 
 ---
 
-## 9. Timeline Summary
+## 8. Timeline Summary
 
 | Feature | Days | Cumulative |
 |---------|------|------------|
 | Test Reorganization | 6 | 6 |
 | Async/Await | 3 | 9 |
 | Git Remotes | 8 | 17 |
-| Compilation | 8 | 25 |
-| Applications | 12-16 | 37-41 |
-| **Buffer/Testing** | +5 | 42-46 |
+| Compilation | 6 | 23 |
+| **Buffer/Testing** | +3 | 26 |
 
-**Total estimated time**: 6-9 weeks
+**Total estimated time**: 4-5 weeks
 
 ---
 
-## 10. Next Steps
+## 9. Next Steps
 
 1. **Review this strategy** - Get approval on scope and approach
 2. **Start Test Reorganization** - Low risk, high value
@@ -659,37 +550,29 @@ Week 7-9: Applications (12-16 days)
 
 ---
 
-## 11. Dependencies and Prerequisites
+## 10. Dependencies and Prerequisites
 
 ### External Dependencies
 
 | Feature | Dependencies | Installation |
 |---------|--------------|--------------|
 | Async/Await | None | - |
-| Git Remotes | `gitpython>=3.1` | `pip install gitpython` |
+| Git Remotes | System `git` CLI | Usually pre-installed |
 | Test Reorganization | `pytest>=7.0` | Already installed |
 | Compilation | `pyoxidizer>=0.24`, Rust | See PyOxidizer docs |
-| p5py | `pygame>=2.0` or `pyglet>=2.0` | `pip install pygame` |
-| asyncify | None | - |
-| todo-flask | `flask>=2.0` | `pip install flask` |
 
 ### Prerequisites
 
 Before starting each feature:
 
 **Git Remotes**:
-- [ ] Decide on gitpython vs dulwich
-- [ ] Set up test Git repositories (local and remote)
-- [ ] Create SSH test keys for CI
+- [ ] Verify git is available on target systems
+- [ ] Set up test Git repositories (local)
+- [ ] Document required git version (if any)
 
 **Compilation**:
 - [ ] Install PyOxidizer and Rust toolchain
 - [ ] Test basic PyOxidizer example
-- [ ] Decide on cross-compilation strategy
-
-**Applications**:
-- [ ] Define MVP scope for each application
-- [ ] Create separate repositories or keep in examples/
 
 ---
 
@@ -699,11 +582,15 @@ Priority 0 represents the next major milestone for Ouverture, transforming it fr
 
 1. **Foundation** (Test Reorganization, Async) - Enable confident development
 2. **Distribution** (Git Remotes, Compilation) - Enable sharing and deployment
-3. **Showcase** (Applications) - Demonstrate value and capabilities
+
+**Key design decisions**:
+- Git operations via `subprocess.run()` with system git (no external Python dependencies)
+- Host-only compilation (no cross-compilation complexity)
+- Applications deferred to future work
 
 **Key success factors**:
 - Incremental implementation with continuous testing
 - Clear scope definition to avoid feature creep
 - Documentation alongside implementation
 
-**Total effort**: 6-9 weeks for full implementation
+**Total effort**: 4-5 weeks for full implementation
