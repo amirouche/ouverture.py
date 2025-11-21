@@ -2,7 +2,7 @@
 
 ![Tests](https://github.com/amirouche/ouverture.py/actions/workflows/test.yml/badge.svg)
 
-**Beyond Babel, all around the world Python functions**
+**Beyond Babel, Python all around the world, one function at a time**
 
 Write functions in your language. Share logic universally. Ouverture creates bridges through shared logic—not by erasing differences, but by recognizing equivalence where it naturally emerges.
 
@@ -248,5 +248,3 @@ File issues on GitHub. We're learning in public.
 ---
 
 *"The limits of my language mean the limits of my world."* – Ludwig Wittgenstein
-
-*Ouverture: Beyond Babel, one function at a time.*
