@@ -2,9 +2,16 @@
 
 ## Executive Summary
 
-This document outlines the strategy for migrating from schema v0 (single JSON file) to schema v1 (directory-based, content-addressed mappings). The migration is a **breaking change** that requires careful planning, backward compatibility, and thorough testing.
+This document outlines the strategy for migrating from schema v0 (single JSON file) to schema v1 (directory-based, content-addressed mappings). The migration adopts **immediate v1 as the default write format** with read-only backward compatibility for v0.
 
-**Estimated effort**: 3-5 days of focused development + comprehensive testing
+**Key decisions**:
+- ✅ V1 becomes the only write format (no v0 write support)
+- ✅ V0 read support maintained indefinitely
+- ✅ Migration deletes v0 files by default (with --keep-v0 safety option)
+- ✅ Multiple mappings shown as selection menu with explanatory comments
+- ✅ Comment field included in mapping.json for variant identification
+
+**Estimated effort**: 5 days implementation + 3-5 days testing/documentation = **8-10 days total**
 
 ---
 
@@ -89,11 +96,14 @@ $OUVERTURE_DIRECTORY/objects/
 {
   "docstring": "Calculate the average of a list of numbers",
   "name_mapping": {"_ouverture_v_0": "calculate_average", "_ouverture_v_1": "numbers"},
-  "alias_mapping": {"abc123": "helper"}
+  "alias_mapping": {"abc123": "helper"},
+  "comment": "Formal mathematical terminology variant"
 }
 ```
 
-**Content-addressed**: Hash of this JSON determines the mapping file path
+**Content-addressed**: Hash of this JSON (including comment field) determines the mapping file path
+
+**Note**: The `comment` field provides rationale for this mapping variant (e.g., "formal vs informal", "camelCase style", "domain-specific terminology"). It's **included in the hash** so different variants are properly distinguished, and displayed to help users choose between multiple mappings.
 
 ---
 
@@ -126,7 +136,7 @@ $OUVERTURE_DIRECTORY/objects/
 ---
 
 ### Phase 2: V1 Write Path (Day 2)
-**Goal**: Implement writing v1 format
+**Goal**: Implement writing v1 format as the default (no v0 write support)
 
 **New Functions**:
 1. `function_save_v1(hash_value, normalized_code, metadata)`
@@ -134,97 +144,95 @@ $OUVERTURE_DIRECTORY/objects/
    - Write `object.json` with schema_version=1
    - Does NOT write language data
 
-2. `mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping)`
-   - Compute mapping hash
+2. `mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment="")`
+   - Create mapping dict with comment field
+   - Compute mapping hash (including comment)
    - Create language directory: `objects/XX/Y.../lang/`
    - Create mapping directory: `objects/XX/Y.../lang/ZZ/W.../`
    - Write `mapping.json`
    - Return mapping hash for confirmation
 
-3. `function_save_dispatch(hash_value, lang, ...)`
-   - Wrapper that dispatches to v0 or v1 based on config/env variable
-   - Initially always uses v0 (safe)
-
 **Modifications**:
-- Keep `function_save()` as v0 implementation (rename to `function_save_v0()`)
-- Create new `function_save()` that calls `function_save_dispatch()`
+- Rename `function_save()` to `function_save_v0()` (keep for migration tool only)
+- Replace `function_save()` with direct call to `function_save_v1()` + `mapping_save_v1()`
+- **No v0 write support** - all new functions written in v1 format
 
 **Testing**:
 - Integration test: add function, verify directory structure
 - Integration test: add same function in 2 languages, verify deduplication
 - Integration test: add same mapping to 2 functions, verify file reuse
+- Integration test: add with comment field
 
-**Risks**: Medium (new code paths, but v0 still default)
+**Risks**: Medium (breaking change for write path, but read remains compatible)
 
 ---
 
 ### Phase 3: V1 Read Path (Day 3)
-**Goal**: Implement reading v1 format
+**Goal**: Implement reading v1 format with v0 backward compatibility (read-only)
 
 **New Functions**:
 1. `function_load_v1(hash_value) -> dict`
    - Load `object.json`
    - Return dict with normalized_code, metadata, etc.
 
-2. `mappings_list_v1(func_hash, lang) -> List[str]`
+2. `mappings_list_v1(func_hash, lang) -> List[tuple]`
    - Scan `objects/XX/Y.../lang/` directory
-   - Return list of mapping hashes
+   - Return list of (mapping_hash, comment) tuples
+   - Comment extracted from each mapping.json for display
 
 3. `mapping_load_v1(func_hash, lang, mapping_hash) -> tuple`
    - Load specific mapping file
-   - Return (docstring, name_mapping, alias_mapping)
+   - Return (docstring, name_mapping, alias_mapping, comment)
 
-4. `mapping_get_latest_v1(func_hash, lang) -> str`
-   - Get most recently created mapping for language
-   - Use filesystem timestamps or metadata field
-   - Return mapping hash
-
-5. `function_load_dispatch(hash_value, lang) -> tuple`
-   - Detect schema version
-   - Call v0 or v1 loader
+4. `function_load_dispatch(hash_value, lang, mapping_hash=None) -> tuple`
+   - Detect schema version using `schema_detect_version()`
+   - If v0: Call v0 loader (read-only, for backward compatibility)
+   - If v1: Call v1 loader with optional mapping_hash
    - Return unified format: (normalized_code, name_mapping, alias_mapping, docstring, metadata)
 
 **Modifications**:
-- Keep `function_load()` as v0 implementation (rename to `function_load_v0()`)
-- Create new `function_load()` that calls `function_load_dispatch()`
+- Rename `function_load()` to `function_load_v0()` (keep for v0 read support)
+- Replace `function_load()` with `function_load_dispatch()`
 
 **Testing**:
 - Integration test: write v1, read v1, verify correctness
-- Integration test: read v0, verify backward compatibility
+- Integration test: read v0 file, verify backward compatibility
 - Integration test: list mappings for language
-- Integration test: get latest mapping
+- Integration test: load specific mapping by hash
 
-**Risks**: High (must maintain backward compatibility)
+**Risks**: High (must maintain backward compatibility with v0 read)
 
 ---
 
 ### Phase 4: Migration Tool (Day 4)
-**Goal**: Provide migration from v0 to v1
+**Goal**: Provide migration from v0 to v1 with automatic v0 file deletion
 
 **New Functions**:
-1. `schema_migrate_function_v0_to_v1(hash_value) -> bool`
+1. `schema_migrate_function_v0_to_v1(hash_value, keep_v0=False) -> bool`
    - Load v0 JSON
    - Extract object data and create v1 object.json
-   - For each language, create mapping files
-   - Optionally delete v0 file or rename to .v0.bak
+   - For each language, create mapping files with empty comment field
+   - Validate v1 structure was created correctly
+   - Delete v0 file (unless keep_v0=True for safety)
    - Return success/failure
 
-2. `schema_migrate_all_v0_to_v1(delete_v0=False, dry_run=False)`
-   - Scan all v0 files
+2. `schema_migrate_all_v0_to_v1(keep_v0=False, dry_run=False)`
+   - Scan all v0 files in objects/ directory
    - Migrate each function
    - Print statistics (migrated, failed, skipped)
-   - Support dry-run mode
+   - Support dry-run mode (no changes)
+   - Delete v0 files after successful migration (unless keep_v0=True)
 
 3. `schema_validate_v1(func_hash) -> bool`
    - Verify object.json exists and is valid
-   - Verify at least one mapping exists
-   - Check hash integrity
+   - Verify at least one mapping exists for at least one language
+   - Check hash integrity (recompute and compare)
    - Return validation result
 
 **CLI Commands**:
 ```bash
-ouverture.py migrate               # Migrate all v0 -> v1 (keep v0 files)
-ouverture.py migrate --delete-v0   # Migrate and delete v0 files
+ouverture.py migrate               # Migrate all v0 -> v1 (delete v0 after success)
+ouverture.py migrate --keep-v0     # Migrate but keep v0 files (safe mode)
 ouverture.py migrate --dry-run     # Show what would be migrated
 ouverture.py migrate HASH          # Migrate specific function
 ouverture.py validate              # Validate entire pool
@@ -232,108 +240,157 @@ ouverture.py validate HASH         # Validate specific function
 ```
 
 **Testing**:
-- Integration test: migrate simple v0 function
+- Integration test: migrate simple v0 function, verify v0 deleted
 - Integration test: migrate function with multiple languages
 - Integration test: migrate function with ouverture imports
+- Integration test: migrate with --keep-v0 flag, verify v0 preserved
 - Integration test: dry-run doesn't modify files
 - Integration test: validate detects corruption
+- Integration test: failed migration doesn't delete v0 file
 
 **Risks**: High (data migration, potential data loss)
 
 **Mitigation**:
-- Always backup before migration
-- Keep v0 files by default
+- Validate v1 structure before deleting v0 file
+- Support --keep-v0 flag for cautious users
 - Extensive validation after migration
+- Never delete v0 on migration failure
 
 ---
 
-### Phase 5: CLI Enhancements (Day 5)
-**Goal**: Support v1-specific features in CLI
+### Phase 5: Mapping Exploration (Day 5)
+**Goal**: Make it easy to explore and select mappings
+
+**New Command: `show`**
+
+The `show` command replaces and unifies the `get` command with better support for multiple mappings:
+
+```bash
+ouverture.py show HASH@LANG             # Auto-select behavior
+ouverture.py show HASH@LANG@LANGHASH    # Explicit mapping selection
+```
+
+**Behavior**:
+
+1. **Single mapping exists**: Print the denormalized function code directly
+   ```bash
+   $ ouverture.py show abc123...@eng
+   def calculate_average(numbers):
+       """Calculate the average of a list of numbers"""
+       return sum(numbers) / len(numbers)
+   ```
+
+2. **Multiple mappings exist**: Show selection menu with commands
+   ```bash
+   $ ouverture.py show abc123...@eng
+   Multiple mappings found for 'eng'. Please choose one:
+
+   ouverture.py show abc123...@eng@xyz789...  # Formal mathematical terminology variant
+   ouverture.py show abc123...@eng@def456...  # Casual style with informal names
+   ouverture.py show abc123...@eng@mno012...  # Domain-specific scientific terminology
+   ```
+   Each line shows the full command with the mapping hash and the comment explaining the variant.
+
+3. **Explicit mapping hash**: Print the specific mapping
+   ```bash
+   $ ouverture.py show abc123...@eng@xyz789...
+   def calculate_average(numbers):
+       """Calculate the average of a list of numbers"""
+       return sum(numbers) / len(numbers)
+   ```
+
+**New Functions**:
+1. `function_show(hash_with_lang_and_mapping: str)`
+   - Parse format: `HASH@LANG[@LANGHASH]`
+   - If LANGHASH provided: Load and print that specific mapping
+   - If LANGHASH omitted:
+     - List all mappings for that language
+     - If exactly 1: Print it
+     - If multiple: Print selection menu with commands and comments
 
 **Modifications**:
-1. `function_add()` - Add `--schema-version` flag (default from config)
-2. `function_get()` - Support multiple mappings per language
+1. Keep `function_get()` for backward compatibility (eventually deprecate)
+2. Add `show` subcommand to CLI parser
+3. Update `function_add()` to accept optional `--comment` parameter:
    ```bash
-   ouverture.py get HASH@eng                    # Get latest mapping
-   ouverture.py get HASH@eng --list-variants    # List all eng mappings
-   ouverture.py get HASH@eng --mapping HASH2    # Get specific mapping
+   ouverture.py add example.py@eng --comment "Formal mathematical terminology"
    ```
-
-3. `function_translate()` - NEW command
-   ```bash
-   ouverture.py translate HASH@eng fra  # Create fra mapping from eng
-   ```
-
-4. `function_add()` - Detect and warn about duplicate mappings
-   ```bash
-   $ ouverture.py add example.py@eng
-   Warning: Mapping already exists for this function in 'eng'
-   Existing hash: abc123...
-   New hash: abc123... (identical)
-   Skipping (already stored).
-   ```
-
-**Configuration**:
-- Add `$OUVERTURE_DIRECTORY/config.json`:
-  ```json
-  {
-    "default_schema_version": 1,
-    "author": "username",
-    "preferred_languages": ["eng", "fra"]
-  }
-  ```
 
 **Testing**:
-- CLI test: add with v1, verify structure
-- CLI test: get with multiple mappings
-- CLI test: translate command
-- CLI test: duplicate detection
+- CLI test: show with single mapping, verify output
+- CLI test: show with multiple mappings, verify menu format
+- CLI test: show with explicit mapping hash
+- CLI test: add with comment parameter
+- CLI test: show with v0 function (backward compatibility)
 
-**Risks**: Medium (UX changes)
+**Risks**: Low (additive feature, backward compatible)
 
 ---
 
 ## 4. Backward Compatibility Strategy
 
-### Transition Period (Recommended: 6 months)
+### Immediate V1 Adoption (Clean Break)
 
-**Month 0-1**:
-- Release v0.9 with v1 read/write support
-- Default: write v0, read both v0 and v1
-- Announce migration timeline
+**Design Decision**: V1 becomes the default immediately upon release. No v0 write support.
 
-**Month 1-3**:
-- Users test migration tool
-- Report issues, fix bugs
-- Default: write v1, read both v0 and v1
+**Write Path**:
+- ✅ V1: Default and only write format
+- ❌ V0: No write support (removed)
 
-**Month 3-6**:
-- Encourage migration with warnings
-- Add `--force-v0` flag for holdouts
-- Document migration in all guides
+**Read Path**:
+- ✅ V1: Native format
+- ✅ V0: Read-only support (maintained indefinitely for backward compatibility)
 
-**Month 6+**:
-- Deprecate v0 write support
-- Keep v0 read support indefinitely
-- Remove v0 write code in v2.0
+### Migration Strategy
 
-### Configuration Control
+**On encountering v0 files**:
+1. CLI commands automatically detect v0 format
+2. Display warning with migration instructions
+3. Read v0 data successfully (backward compatible)
+4. Suggest running migration tool
 
-Environment variable: `OUVERTURE_SCHEMA_VERSION`
+**Example warning**:
 ```bash
-export OUVERTURE_SCHEMA_VERSION=0  # Force v0 (legacy)
-export OUVERTURE_SCHEMA_VERSION=1  # Force v1 (future)
-# Unset: use default from config file or code default
-```
-
-### Error Handling
-
-When v0 file encountered:
-```
-Warning: Function 'abc123...' uses schema v0 (deprecated).
-Consider migrating: ouverture.py migrate abc123...
+$ ouverture.py show abc123...@eng
+Warning: Function 'abc123...' uses deprecated schema v0.
+Please migrate: ouverture.py migrate abc123...
 Reading v0 format...
+
+def calculate_average(numbers):
+    ...
 ```
+
+### Translation Requires Migration
+
+When translating a v0 function, automatic migration is triggered:
+
+```bash
+$ ouverture.py translate abc123...@eng fra
+Function abc123... is in schema v0.
+Auto-migrating to v1 before adding translation...
+Migration successful. V0 file deleted.
+Adding French translation...
+```
+
+**Rationale**: Can't add v1 mappings to v0 functions. Migration is required for new translations.
+
+### User Guidance
+
+**For users with existing v0 pools**:
+1. Run migration tool: `ouverture.py migrate`
+2. Validate results: `ouverture.py validate`
+3. All v0 files automatically deleted after successful migration
+4. Use `--keep-v0` flag if cautious
+
+**For new users**:
+- No action needed
+- All functions stored in v1 format by default
+
+### No Environment Variables Needed
+
+Since v1 is the only write format, no configuration needed. The code automatically:
+- Writes v1 for all new functions
+- Reads v0 or v1 transparently based on detection
 
 ---
 
@@ -374,45 +431,46 @@ Reading v0 format...
 
 ---
 
-## 6. Open Questions & Decisions Needed
+## 6. Decisions Made
 
 ### Q1: When to enable v1 by default?
-**Options**:
-- A) Immediately (aggressive, risky)
-- B) After 1 month of testing (balanced)
-- C) After user opt-in period (conservative)
+**Decision**: ✅ **Immediately** - V1 becomes the default and only write format upon release.
 
-**Recommendation**: **B** - Enable v1 by default after 1 month of testing, with easy rollback via env variable.
+**Rationale**: Clean break simplifies implementation. No need for dispatch logic or configuration. Users with v0 pools use migration tool once.
 
 ### Q2: What to do with v0 files after migration?
-**Options**:
-- A) Delete immediately (clean, but dangerous)
-- B) Rename to `.v0.bak` (safe, but clutters)
-- C) Keep indefinitely (safest, wastes space)
+**Decision**: ✅ **Delete after successful migration** - V0 files removed automatically.
 
-**Recommendation**: **B** - Rename to `.v0.bak` by default, provide `--delete-v0` flag for cleanup after validation.
+**Rationale**: Clean storage, no clutter. Safe because:
+- Validation runs before deletion
+- `--keep-v0` flag available for cautious users
+- Migration never deletes on failure
 
 ### Q3: How to select mapping when multiple exist?
-**Options**:
-- A) Always use latest (by timestamp)
-- B) Let user choose interactively
-- C) Use config file to specify preference
+**Decision**: ✅ **Show selection menu with commands** - When multiple mappings exist, display all options with full commands and comments.
 
-**Recommendation**: **A** for `get` command (convenience), **B** with `--interactive` flag for power users.
+**Example**:
+```bash
+$ ouverture.py show HASH@eng
+Multiple mappings found for 'eng'. Please choose one:
+
+ouverture.py show HASH@eng@xyz789...  # Formal mathematical terminology
+ouverture.py show HASH@eng@def456...  # Casual informal style
+```
+
+**Rationale**: Explicit is better than implicit. Users see all options and can copy-paste the command they want.
 
 ### Q4: Should mapping hash include timestamp/author?
-**Options**:
-- A) Yes (every save creates new mapping, no deduplication)
-- B) No (identical mappings deduplicated across functions)
+**Decision**: ✅ **No timestamp/author in hash** - Hash only docstring, name_mapping, alias_mapping, and comment.
 
-**Recommendation**: **B** - Hash only docstring/name_mapping/alias_mapping for maximum deduplication. Store timestamp/author in metadata if needed.
+**Rationale**: Enables deduplication. Identical mappings (even with same comment) share storage across functions.
+
+**Note**: Timestamp/author can be added as metadata fields later if needed (not part of hash).
 
 ### Q5: Support compression in initial v1 release?
-**Options**:
-- A) Yes (future-proof, but adds complexity)
-- B) No (simpler, add later if needed)
+**Decision**: ✅ **No compression** - Keep it simple for initial release.
 
-**Recommendation**: **B** - Add `encoding: "none"` field to object.json for future extensibility, but don't implement compression yet. Wait for real-world usage data.
+**Rationale**: Add complexity only when needed. Can add compression later without breaking changes (use `encoding` field in object.json).
 
 ---
 
@@ -427,43 +485,52 @@ Reading v0 format...
 - [ ] Update CLAUDE.md with new functions
 
 ### Phase 2: V1 Write Path
-- [ ] Rename `function_save()` to `function_save_v0()`
-- [ ] Implement `function_save_v1()`
-- [ ] Implement `mapping_save_v1()`
-- [ ] Implement `function_save_dispatch()`
-- [ ] Create new `function_save()` wrapper
+- [ ] Rename `function_save()` to `function_save_v0()` (keep for migration tool)
+- [ ] Implement `function_save_v1()` (object.json creation)
+- [ ] Implement `mapping_save_v1()` (with comment field support)
+- [ ] Replace `function_save()` with v1 implementation (no dispatch needed)
+- [ ] Update `function_add()` to use v1 save functions
+- [ ] Add `--comment` parameter to `function_add()` CLI
 - [ ] Add integration tests for v1 writing
 - [ ] Test deduplication of identical mappings
+- [ ] Test comment field in mappings
 
 ### Phase 3: V1 Read Path
-- [ ] Rename `function_load()` to `function_load_v0()`
-- [ ] Implement `function_load_v1()`
-- [ ] Implement `mappings_list_v1()`
-- [ ] Implement `mapping_load_v1()`
-- [ ] Implement `mapping_get_latest_v1()`
-- [ ] Implement `function_load_dispatch()`
-- [ ] Create new `function_load()` wrapper
+- [ ] Rename `function_load()` to `function_load_v0()` (keep for v0 read support)
+- [ ] Implement `function_load_v1()` (load object.json)
+- [ ] Implement `mappings_list_v1()` (return list of mapping_hash, comment tuples)
+- [ ] Implement `mapping_load_v1()` (load specific mapping by hash)
+- [ ] Implement `function_load_dispatch()` (detect v0/v1 and route)
+- [ ] Replace `function_load()` with dispatch implementation
 - [ ] Add integration tests for v1 reading
-- [ ] Test backward compatibility with v0 files
+- [ ] Test backward compatibility with v0 files (read-only)
+- [ ] Test loading specific mapping by hash
 
 ### Phase 4: Migration Tool
-- [ ] Implement `schema_migrate_function_v0_to_v1()`
-- [ ] Implement `schema_migrate_all_v0_to_v1()`
-- [ ] Implement `schema_validate_v1()`
-- [ ] Add `migrate` CLI command
+- [ ] Implement `schema_migrate_function_v0_to_v1()` (with keep_v0 parameter)
+- [ ] Implement `schema_migrate_all_v0_to_v1()` (delete v0 by default)
+- [ ] Implement `schema_validate_v1()` (verify object.json and mappings)
+- [ ] Add `migrate` CLI command with --keep-v0 flag
 - [ ] Add `validate` CLI command
-- [ ] Add integration tests for migration
+- [ ] Add integration tests for migration with v0 deletion
+- [ ] Test --keep-v0 flag preserves v0 files
 - [ ] Test dry-run mode
-- [ ] Create backup mechanism
+- [ ] Test migration failure doesn't delete v0 file
+- [ ] Add validation before v0 deletion
 
-### Phase 5: CLI Enhancements
-- [ ] Add `--schema-version` flag to `add` command
-- [ ] Support `--list-variants` in `get` command
-- [ ] Support `--mapping HASH` in `get` command
-- [ ] Implement `translate` CLI command
-- [ ] Add duplicate detection to `add` command
-- [ ] Create config file format
-- [ ] Add CLI tests for new features
+### Phase 5: Mapping Exploration
+- [ ] Implement `function_show()` with HASH@LANG[@LANGHASH] parsing
+- [ ] Add `show` subcommand to CLI parser
+- [ ] Implement single mapping display (direct code output)
+- [ ] Implement multiple mapping menu (with commands and comments)
+- [ ] Implement explicit mapping hash selection
+- [ ] Update `function_add()` to accept `--comment` parameter
+- [ ] Keep `function_get()` for backward compatibility (with deprecation note)
+- [ ] Add CLI tests for show with single mapping
+- [ ] Add CLI tests for show with multiple mappings
+- [ ] Add CLI tests for show with explicit mapping hash
+- [ ] Add CLI tests for add with comment
+- [ ] Test show with v0 functions (backward compatibility)
 - [ ] Update documentation (README.md, CLAUDE.md)
 
 ### Documentation
@@ -514,13 +581,13 @@ Reading v0 format...
 
 **Decision**: Rejected for now - Consider for Priority 2 (remotes)
 
-### Alternative 3: Immediate Breaking Change (No v0 Support)
-**Idea**: Remove v0 support entirely, force migration
+### Alternative 3: Immediate V1 Adoption (No v0 Write)
+**Idea**: Make v1 the only write format, maintain v0 read support
 
-**Pros**: Simpler code, cleaner architecture
-**Cons**: Breaks existing users, no rollback
+**Pros**: Simpler code (no dispatch), cleaner architecture, forces users to migrate once
+**Cons**: Breaking change for write operations
 
-**Decision**: Rejected - Too aggressive, maintain backward compatibility
+**Decision**: ✅ **ACCEPTED** - Best balance of simplicity and safety. V0 read support provides backward compatibility.
 
 ---
 
@@ -565,28 +632,39 @@ Reading v0 format...
 ## 11. Next Steps
 
 **Immediate actions**:
-1. **Review this strategy** with maintainer/team
-2. **Answer open questions** (Q1-Q5 above)
+1. ✅ **Review this strategy** - Complete
+2. ✅ **Answer open questions** - All decisions made (see Section 6)
 3. **Create feature branch**: `feature/schema-v1`
 4. **Start Phase 1** implementation
 5. **Set up CI/CD** for automated testing
 
 **Before starting implementation**:
-- [ ] Approval on overall strategy
-- [ ] Decisions on open questions
+- [x] Approval on overall strategy ✅
+- [x] Decisions on open questions ✅
 - [ ] Agreement on timeline
-- [ ] Backup plan for rollback
+- [ ] Backup plan if issues arise
 
 ---
 
 ## Conclusion
 
-The migration from schema v0 to v1 is a significant undertaking that will **future-proof** the ouverture storage format. The proposed **5-phase approach** balances:
+The migration from schema v0 to v1 is a significant undertaking that will **future-proof** the ouverture storage format. The proposed **5-phase approach** with **immediate v1 adoption** provides:
 
-- **Safety**: Backward compatibility, extensive testing, gradual rollout
-- **Flexibility**: Content-addressed mappings, extended language codes, metadata
-- **Simplicity**: Clean separation of concerns, discoverable mappings, unified directory structure
+- **Simplicity**: No dispatch logic, no configuration - v1 is the only write format
+- **Safety**: Read-only v0 support for backward compatibility, validation before migration
+- **Flexibility**: Content-addressed mappings, extended language codes (up to 256 chars), extensible metadata
+- **Clarity**: Clean separation between code (object.json) and language variants (mapping.json)
+- **Discoverability**: Multiple mappings per language with explanatory comments
 
-**Recommendation**: Proceed with implementation, starting with Phase 1 (Foundation), with close attention to testing and backward compatibility.
+**Key design decisions**:
+- ✅ V1 becomes default immediately (no gradual rollout)
+- ✅ V0 read-only support maintained indefinitely
+- ✅ Migration deletes v0 files by default (with --keep-v0 safety flag)
+- ✅ Multiple mappings shown as selection menu with comments
+- ✅ No compression or timestamp in initial release (YAGNI principle)
+
+**Recommendation**: Proceed with implementation, starting with Phase 1 (Foundation), with close attention to testing and backward compatibility for v0 reading.
 
 The key to success is **incremental progress** with **continuous validation** at each phase.
+
+**Total estimated time**: 8-10 days (5 days implementation + 3-5 days testing/documentation)
