@@ -25,6 +25,12 @@ def normalize_code_for_test(code: str) -> str:
     always outputs code with proper line breaks and indentation, regardless of
     the input format.
 
+    The function:
+    1. Parses code into AST
+    2. Clears all line/column information recursively
+    3. Fixes missing locations
+    4. Unparses back to string
+
     Example:
         # Wrong - this format never exists in practice:
         normalized_code = "def _ouverture_v_0(): return 42"
@@ -34,6 +40,18 @@ def normalize_code_for_test(code: str) -> str:
         # Returns: "def _ouverture_v_0():\\n    return 42"
     """
     tree = ast.parse(code)
+
+    # Clear all line and column information recursively
+    for node in ast.walk(tree):
+        if hasattr(node, 'lineno'):
+            node.lineno = None
+        if hasattr(node, 'col_offset'):
+            node.col_offset = None
+        if hasattr(node, 'end_lineno'):
+            node.end_lineno = None
+        if hasattr(node, 'end_col_offset'):
+            node.end_col_offset = None
+
     ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
