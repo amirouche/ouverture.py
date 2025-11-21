@@ -561,10 +561,11 @@ CRITICAL: Hash excludes docstrings to enable multilingual support
 1. **Canonical serialization**: Public hashes are computed from JSON-serialized objects with:
    - **Sorted keys**: `json.dumps(obj, sort_keys=True, ...)` ensures key order is deterministic
    - **Unicode preservation**: `ensure_ascii=False` maintains Unicode characters without escape sequences
+   - **No indentation**: Compact format without whitespace (no `indent` parameter)
    - **Consistent encoding**: UTF-8 encoding for all serialized data
 
 2. **Hash vs. filename distinction**:
-   - The hash in a filename (e.g., `objects/ab/cdef123...json`) identifies the **logical content**
+   - The hash in a filename (e.g., `objects/ab/cdef123.../object.json` or `eng/xy/z789.../mapping.json`) identifies the **logical content**
    - It is NOT a hash of the physical file's bytes on disk
    - The stored JSON may include metadata, formatting, or additional fields not included in hash computation
 
