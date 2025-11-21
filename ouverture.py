@@ -325,13 +325,15 @@ def compute_hash(code: str) -> str:
 
 def get_ouverture_directory() -> Path:
     """
-    Get the ouverture directory from environment variable or default to '.ouverture'.
-    Environment variable can be either OUVERTURE_DIRECTORY or OUVERTURE_ROOT.
+    Get the ouverture directory from environment variable or default to '$HOME/.local/ouverture/'.
+    Environment variable: OUVERTURE_DIRECTORY
     """
-    env_dir = os.environ.get('OUVERTURE_DIRECTORY') or os.environ.get('OUVERTURE_ROOT')
+    env_dir = os.environ.get('OUVERTURE_DIRECTORY')
     if env_dir:
         return Path(env_dir)
-    return Path('.ouverture')
+    # Default to $HOME/.local/ouverture/
+    home = os.environ.get('HOME', os.path.expanduser('~'))
+    return Path(home) / '.local' / 'ouverture'
 
 
 def save_function(hash_value: str, lang: str, normalized_code: str, docstring: str,
