@@ -862,8 +862,8 @@ def test_mapping_compute_hash_canonical_json():
 
 def test_schema_detect_version_v0(mock_ouverture_dir):
     """Test that schema_detect_version correctly identifies v0 format"""
-    ouverture_dir = mock_ouverture_dir / '.ouverture'
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = mock_ouverture_dir / '.ouverture' / 'git'
+    objects_dir = pool_dir / 'objects'
     test_hash = "abcd1234" + "0" * 56
 
     # Create v0 format: XX/YYYYYY.json
@@ -889,8 +889,8 @@ def test_schema_detect_version_v0(mock_ouverture_dir):
 
 def test_schema_detect_version_v1(mock_ouverture_dir):
     """Test that schema_detect_version correctly identifies v1 format"""
-    ouverture_dir = mock_ouverture_dir / '.ouverture'
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = mock_ouverture_dir / '.ouverture' / 'git'
+    objects_dir = pool_dir / 'objects'
     test_hash = "abcd1234" + "0" * 56
 
     # Create v1 format: sha256/XX/YYYYYY.../object.json

@@ -92,14 +92,22 @@ def cli_run(args: list, env: dict = None, cwd: str = None) -> subprocess.Complet
 
 
 class CLIRunner:
-    """Helper class for running CLI commands with a specific ouverture directory."""
+    """Helper class for running CLI commands with a specific ouverture directory.
+
+    Directory structure:
+        ouverture_dir/
+        ├── git/           # Pool directory (git repository)
+        │   └── objects/
+        └── config/        # Configuration directory
+            └── config.json
+    """
 
     def __init__(self, ouverture_dir: Path):
         self.ouverture_dir = ouverture_dir
-        self.config_path = ouverture_dir / 'config.json'
+        self.pool_dir = ouverture_dir / 'git'
+        self.config_dir = ouverture_dir / 'config'
         self.env = {
-            'OUVERTURE_DIRECTORY': str(ouverture_dir),
-            'OUVERTURE_CONFIG_PATH': str(self.config_path)
+            'OUVERTURE_DIRECTORY': str(ouverture_dir)
         }
 
     def run(self, args: list, cwd: str = None) -> subprocess.CompletedProcess:
@@ -135,13 +143,32 @@ class CLIRunner:
 @pytest.fixture
 def mock_ouverture_dir(tmp_path, monkeypatch):
     """
-    Fixture to monkey patch directory_get_ouverture to return a temp directory.
+    Fixture to monkey patch directory functions to return a temp directory.
     This ensures tests work with pytest-xdist (parallel test runner).
+
+    Directory structure:
+        tmp_path/.ouverture/
+        ├── git/           # Pool directory
+        │   └── objects/
+        └── config/        # Configuration directory
+            └── config.json
     """
+    base_dir = tmp_path / '.ouverture'
+    pool_dir = base_dir / 'git'
+    config_dir = base_dir / 'config'
+
     def _get_temp_ouverture_dir():
-        return tmp_path / '.ouverture'
+        return base_dir
+
+    def _get_temp_pool_dir():
+        return pool_dir
+
+    def _get_temp_config_dir():
+        return config_dir
 
     monkeypatch.setattr(ouverture, 'directory_get_ouverture', _get_temp_ouverture_dir)
+    monkeypatch.setattr(ouverture, 'directory_get_pool', _get_temp_pool_dir)
+    monkeypatch.setattr(ouverture, 'directory_get_config', _get_temp_config_dir)
     return tmp_path
 
 
@@ -151,9 +178,19 @@ def cli_runner(tmp_path):
     Fixture providing a CLIRunner with isolated ouverture directory.
 
     Use this for integration tests that call CLI commands.
+    Creates the directory structure:
+        tmp_path/.ouverture/
+        ├── git/objects/    # Pool directory
+        └── config/         # Configuration directory
     """
     ouverture_dir = tmp_path / '.ouverture'
-    ouverture_dir.mkdir(parents=True, exist_ok=True)
+    pool_dir = ouverture_dir / 'git'
+    objects_dir = pool_dir / 'objects'
+    config_dir = ouverture_dir / 'config'
+
+    objects_dir.mkdir(parents=True, exist_ok=True)
+    config_dir.mkdir(parents=True, exist_ok=True)
+
     return CLIRunner(ouverture_dir)
 
 
