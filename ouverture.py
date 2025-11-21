@@ -1051,6 +1051,194 @@ def function_get(hash_with_lang: str):
     print(original_code)
 
 
+def schema_migrate_function_v0_to_v1(func_hash: str, keep_v0: bool = False):
+    """
+    Migrate a single function from schema v0 to v1.
+
+    Args:
+        func_hash: Function hash (64-character hex)
+        keep_v0: If True, keep the v0 file after migration (default: False)
+    """
+    # Verify it's a v0 function
+    version = schema_detect_version(func_hash)
+    if version != 0:
+        print(f"Error: Function {func_hash} is not in v0 format (version: {version})", file=sys.stderr)
+        sys.exit(1)
+
+    # Load v0 data
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+    v0_path = objects_dir / func_hash[:2] / f'{func_hash[2:]}.json'
+
+    try:
+        with open(v0_path, 'r', encoding='utf-8') as f:
+            v0_data = json.load(f)
+    except (IOError, json.JSONDecodeError) as e:
+        print(f"Error: Failed to load v0 data: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Extract normalized code
+    normalized_code = v0_data['normalized_code']
+
+    # Create metadata for v1
+    metadata = metadata_create()
+
+    # Save function in v1 format (object.json only)
+    function_save_v1(func_hash, normalized_code, metadata)
+
+    # Migrate each language mapping
+    for lang in v0_data.get('name_mappings', {}).keys():
+        docstring = v0_data.get('docstrings', {}).get(lang, '')
+        name_mapping = v0_data['name_mappings'][lang]
+        alias_mapping = v0_data.get('alias_mappings', {}).get(lang, {})
+
+        # Save mapping in v1 format
+        mapping_save_v1(func_hash, lang, docstring, name_mapping, alias_mapping, comment='')
+
+    # Validate migration
+    is_valid, errors = schema_validate_v1(func_hash)
+    if not is_valid:
+        print(f"Error: Migration validation failed for {func_hash}:", file=sys.stderr)
+        for error in errors:
+            print(f"  - {error}", file=sys.stderr)
+        sys.exit(1)
+
+    # Delete v0 file if requested
+    if not keep_v0:
+        try:
+            v0_path.unlink()
+            # Try to remove parent directory if empty
+            try:
+                v0_path.parent.rmdir()
+            except OSError:
+                pass  # Directory not empty, that's fine
+        except IOError as e:
+            print(f"Warning: Failed to delete v0 file: {e}", file=sys.stderr)
+
+    print(f"Migrated {func_hash} from v0 to v1 (keep_v0={keep_v0})")
+
+
+def schema_migrate_all_v0_to_v1(keep_v0: bool = False, dry_run: bool = False) -> list:
+    """
+    Migrate all v0 functions to v1.
+
+    Args:
+        keep_v0: If True, keep v0 files after migration (default: False)
+        dry_run: If True, only report what would be migrated without actually migrating (default: False)
+
+    Returns:
+        List of function hashes that were (or would be) migrated
+    """
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Find all v0 files
+    v0_functions = []
+    if not objects_dir.exists():
+        return v0_functions
+
+    for hash_prefix_dir in objects_dir.iterdir():
+        if not hash_prefix_dir.is_dir():
+            continue
+        if hash_prefix_dir.name == 'sha256':
+            # Skip v1 algorithm directory
+            continue
+
+        for json_file in hash_prefix_dir.glob('*.json'):
+            # Reconstruct hash
+            func_hash = hash_prefix_dir.name + json_file.stem
+
+            # Verify it's v0
+            version = schema_detect_version(func_hash)
+            if version == 0:
+                v0_functions.append(func_hash)
+
+    if dry_run:
+        print(f"Dry run: Would migrate {len(v0_functions)} functions")
+        for func_hash in v0_functions:
+            print(f"  - {func_hash}")
+        return v0_functions
+
+    # Migrate each function
+    print(f"Migrating {len(v0_functions)} functions from v0 to v1...")
+    for func_hash in v0_functions:
+        try:
+            schema_migrate_function_v0_to_v1(func_hash, keep_v0=keep_v0)
+        except Exception as e:
+            print(f"Error migrating {func_hash}: {e}", file=sys.stderr)
+            # Continue with other functions
+
+    print(f"Migration complete. Migrated {len(v0_functions)} functions.")
+    return v0_functions
+
+
+def schema_validate_v1(func_hash: str) -> tuple:
+    """
+    Validate a v1 function.
+
+    Checks:
+    - object.json exists and is valid
+    - At least one language mapping exists
+    - All mapping files are valid JSON
+
+    Args:
+        func_hash: Function hash (64-character hex)
+
+    Returns:
+        Tuple of (is_valid, errors) where errors is a list of error messages
+    """
+    errors = []
+    ouverture_dir = directory_get_ouverture()
+    objects_dir = ouverture_dir / 'objects'
+
+    # Check object.json exists
+    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    object_json = func_dir / 'object.json'
+
+    if not object_json.exists():
+        errors.append(f"object.json not found for function {func_hash}")
+        return False, errors
+
+    # Validate object.json structure
+    try:
+        with open(object_json, 'r', encoding='utf-8') as f:
+            func_data = json.load(f)
+
+        # Check required fields
+        required_fields = ['schema_version', 'hash', 'hash_algorithm', 'normalized_code', 'encoding', 'metadata']
+        for field in required_fields:
+            if field not in func_data:
+                errors.append(f"Missing required field in object.json: {field}")
+
+        # Verify schema version
+        if func_data.get('schema_version') != 1:
+            errors.append(f"Invalid schema version: {func_data.get('schema_version')}")
+
+    except (IOError, json.JSONDecodeError) as e:
+        errors.append(f"Failed to parse object.json: {e}")
+        return False, errors
+
+    # Check that at least one language mapping exists
+    if not func_dir.exists():
+        errors.append(f"Function directory does not exist: {func_dir}")
+        return False, errors
+
+    # Count language directories
+    lang_count = 0
+    for item in func_dir.iterdir():
+        if item.is_dir() and item.name != 'sha256' and not item.name.endswith('.json'):
+            lang_count += 1
+
+    if lang_count == 0:
+        errors.append("No language mappings found (no language directories)")
+
+    # If we have errors, return False
+    if errors:
+        return False, errors
+
+    return True, []
+
+
 def main():
     parser = argparse.ArgumentParser(description='ouverture - Function pool manager')
     subparsers = parser.add_subparsers(dest='command', help='Commands')
@@ -1064,12 +1252,38 @@ def main():
     get_parser = subparsers.add_parser('get', help='Get a function from the pool')
     get_parser.add_argument('hash', help='Function hash with @lang suffix (e.g., abc123...@eng)')
 
+    # Migrate command
+    migrate_parser = subparsers.add_parser('migrate', help='Migrate functions from v0 to v1')
+    migrate_parser.add_argument('hash', nargs='?', help='Specific function hash to migrate (optional, migrates all if omitted)')
+    migrate_parser.add_argument('--keep-v0', action='store_true', help='Keep v0 files after migration')
+    migrate_parser.add_argument('--dry-run', action='store_true', help='Show what would be migrated without actually migrating')
+
+    # Validate command
+    validate_parser = subparsers.add_parser('validate', help='Validate v1 function structure')
+    validate_parser.add_argument('hash', help='Function hash to validate')
+
     args = parser.parse_args()
 
     if args.command == 'add':
         function_add(args.file, args.comment)
     elif args.command == 'get':
         function_get(args.hash)
+    elif args.command == 'migrate':
+        if args.hash:
+            # Migrate specific function
+            schema_migrate_function_v0_to_v1(args.hash, keep_v0=args.keep_v0)
+        else:
+            # Migrate all functions
+            schema_migrate_all_v0_to_v1(keep_v0=args.keep_v0, dry_run=args.dry_run)
+    elif args.command == 'validate':
+        is_valid, errors = schema_validate_v1(args.hash)
+        if is_valid:
+            print(f"✓ Function {args.hash} is valid")
+        else:
+            print(f"✗ Function {args.hash} is invalid:", file=sys.stderr)
+            for error in errors:
+                print(f"  - {error}", file=sys.stderr)
+            sys.exit(1)
     else:
         parser.print_help()
 

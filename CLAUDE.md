@@ -229,6 +229,31 @@ $HOME/.local/ouverture/
 - Rewrites imports: `from ouverture.pool import X` → `from ouverture.pool import X as alias` (restores alias)
 - Transforms calls: `HASH._ouverture_v_0(...)` → `alias(...)`
 
+#### `schema_migrate_function_v0_to_v1(func_hash, keep_v0=False)` (lines 1054-1118)
+**Migrate single function from v0 to v1** (Schema Migration)
+- Loads v0 data from single JSON file
+- Creates v1 object.json with metadata
+- Migrates each language mapping to separate mapping.json files
+- Validates migration before completion
+- Optionally deletes v0 file (default: delete)
+- **Note**: CLI command `ouverture.py migrate HASH [--keep-v0]`
+
+#### `schema_migrate_all_v0_to_v1(keep_v0=False, dry_run=False)` (lines 1121-1172)
+**Migrate all v0 functions to v1** (Schema Migration)
+- Scans objects directory for v0 files
+- Migrates each function using schema_migrate_function_v0_to_v1()
+- Supports dry-run mode (shows what would be migrated)
+- Returns list of migrated function hashes
+- **Note**: CLI command `ouverture.py migrate [--keep-v0] [--dry-run]`
+
+#### `schema_validate_v1(func_hash)` (lines 1175-1239)
+**Validate v1 function structure** (Schema Validation)
+- Checks object.json exists and has required fields
+- Verifies at least one language mapping exists
+- Validates schema_version is 1
+- Returns tuple of (is_valid, errors)
+- **Note**: CLI command `ouverture.py validate HASH`
+
 ### Storage Schema
 
 #### Current Schema (v0)
