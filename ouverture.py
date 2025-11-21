@@ -8,9 +8,10 @@ import builtins
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, Set, Tuple, List
+from typing import Dict, Set, Tuple, List, Union
 
 
 # Get all Python built-in names
@@ -44,6 +45,13 @@ class ASTNormalizer(ast.NodeTransformer):
         self.generic_visit(node)
         return node
 
+    def visit_AsyncFunctionDef(self, node):
+        """Handle async function definitions the same as regular functions"""
+        if node.name in self.name_mapping:
+            node.name = self.name_mapping[node.name]
+        self.generic_visit(node)
+        return node
+
 
 def names_collect(tree: ast.Module) -> Set[str]:
     """Collect all names (variables, functions) used in the AST"""
@@ -52,7 +60,7 @@ def names_collect(tree: ast.Module) -> Set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Name):
             names.add(node.id)
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             names.add(node.name)
             for arg in node.args.args:
                 names.add(arg.arg)
@@ -116,15 +124,15 @@ def imports_sort(tree: ast.Module) -> ast.Module:
     return tree
 
 
-def function_extract_definition(tree: ast.Module) -> Tuple[ast.FunctionDef, List[ast.stmt]]:
-    """Extract the function definition and import statements"""
+def function_extract_definition(tree: ast.Module) -> Tuple[Union[ast.FunctionDef, ast.AsyncFunctionDef], List[ast.stmt]]:
+    """Extract the function definition (sync or async) and import statements"""
     imports = []
     function_def = None
 
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             imports.append(node)
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             if function_def is not None:
                 raise ValueError("Only one function definition is allowed per file")
             function_def = node
@@ -135,7 +143,7 @@ def function_extract_definition(tree: ast.Module) -> Tuple[ast.FunctionDef, List
     return function_def, imports
 
 
-def mapping_create_name(function_def: ast.FunctionDef, imports: List[ast.stmt],
+def mapping_create_name(function_def: Union[ast.FunctionDef, ast.AsyncFunctionDef], imports: List[ast.stmt],
                         ouverture_aliases: Set[str] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
     """
     Create mapping from original names to normalized names.
@@ -275,9 +283,9 @@ def ast_clear_locations(tree: ast.AST):
             node.end_col_offset = None
 
 
-def docstring_extract(function_def: ast.FunctionDef) -> Tuple[str, ast.FunctionDef]:
+def docstring_extract(function_def: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> Tuple[str, Union[ast.FunctionDef, ast.AsyncFunctionDef]]:
     """
-    Extract docstring from function definition.
+    Extract docstring from function definition (sync or async).
     Returns (docstring, function_without_docstring)
     """
     docstring = ast.get_docstring(function_def)
@@ -412,18 +420,17 @@ def schema_detect_version(func_hash: str) -> int:
     Returns:
         0 for v0 format, 1 for v1 format, None if function not found
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Check for v1 format first (function directory with object.json)
-    v1_func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    v1_func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     v1_object_json = v1_func_dir / 'object.json'
 
     if v1_object_json.exists():
         return 1
 
     # Check for v0 format (JSON file)
-    v0_hash_dir = objects_dir / func_hash[:2]
+    v0_hash_dir = pool_dir / func_hash[:2]
     v0_json_path = v0_hash_dir / f'{func_hash[2:]}.json'
 
     if v0_json_path.exists():
@@ -464,8 +471,15 @@ def metadata_create() -> Dict[str, any]:
 
 def directory_get_ouverture() -> Path:
     """
-    Get the ouverture directory from environment variable or default to '$HOME/.local/ouverture/'.
+    Get the ouverture base directory from environment variable or default to '$HOME/.local/ouverture/'.
     Environment variable: OUVERTURE_DIRECTORY
+
+    Directory structure:
+        $OUVERTURE_DIRECTORY/
+        ├── pool/          # Pool directory (git repository for objects)
+        │   └── sha256/    # Hash algorithm prefix
+        │       └── XX/    # First 2 chars of hash
+        └── config.json    # Configuration file
     """
     env_dir = os.environ.get('OUVERTURE_DIRECTORY')
     if env_dir:
@@ -475,14 +489,24 @@ def directory_get_ouverture() -> Path:
     return Path(home) / '.local' / 'ouverture'
 
 
+def directory_get_pool() -> Path:
+    """
+    Get the pool directory (git repository) where objects are stored.
+    Returns: $OUVERTURE_DIRECTORY/pool/
+    """
+    return directory_get_ouverture() / 'pool'
+
+
 def config_get_path() -> Path:
     """
     Get the path to the config file.
-    Config is stored in ~/.config/ouverture/config.json (XDG Base Directory spec)
+    Config is stored in $OUVERTURE_DIRECTORY/config.json
+    Can be overridden with OUVERTURE_CONFIG_PATH environment variable for testing.
     """
-    home = os.environ.get('HOME', os.path.expanduser('~'))
-    config_dir = Path(home) / '.config' / 'ouverture'
-    return config_dir / 'config.json'
+    config_override = os.environ.get('OUVERTURE_CONFIG_PATH')
+    if config_override:
+        return Path(config_override)
+    return directory_get_ouverture() / 'config.json'
 
 
 def config_read() -> Dict[str, any]:
@@ -530,10 +554,11 @@ def command_init():
     """
     Initialize ouverture directory and config file.
     """
-    # Create ouverture directory
     ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
-    objects_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create pool directory (git repository for objects)
+    pool_dir = directory_get_pool()
+    pool_dir.mkdir(parents=True, exist_ok=True)
 
     # Create config file with defaults
     config_path = config_get_path()
@@ -613,9 +638,8 @@ def function_save_v0(hash_value: str, lang: str, normalized_code: str, docstring
     New code should use function_save_v1() instead.
     """
     # Create directory structure: OUVERTURE_DIR/objects/XX/
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
-    hash_dir = objects_dir / hash_value[:2]
+    pool_dir = directory_get_pool()
+    hash_dir = pool_dir / hash_value[:2]
     hash_dir.mkdir(parents=True, exist_ok=True)
 
     # Create JSON file path
@@ -661,11 +685,10 @@ def function_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, 
         normalized_code: Normalized code with docstring
         metadata: Metadata dict (created, author, tags, dependencies)
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Create function directory: objects/sha256/XX/YYYYYY.../
-    func_dir = objects_dir / 'sha256' / hash_value[:2] / hash_value[2:]
+    func_dir = pool_dir / 'sha256' / hash_value[:2] / hash_value[2:]
     func_dir.mkdir(parents=True, exist_ok=True)
 
     # Create object.json
@@ -710,14 +733,13 @@ def mapping_save_v1(func_hash: str, lang: str, docstring: str,
     Returns:
         Mapping hash (64-character hex)
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Compute mapping hash
     mapping_hash = mapping_compute_hash(docstring, name_mapping, alias_mapping, comment)
 
     # Create mapping directory: objects/sha256/XX/Y.../lang/sha256/ZZ/W.../
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     mapping_dir = func_dir / lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:]
     mapping_dir.mkdir(parents=True, exist_ok=True)
 
@@ -804,6 +826,13 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
             self.generic_visit(node)
             return node
 
+        def visit_AsyncFunctionDef(self, node):
+            # Replace normalized async function name
+            if node.name in name_mapping:
+                node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
         def visit_Attribute(self, node):
             # Replace object_c0ffeebad._ouverture_v_0(...) with alias(...)
             if (isinstance(node.value, ast.Name) and
@@ -854,13 +883,217 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     return ast.unparse(tree)
 
 
+# =============================================================================
+# Git Remote Functions
+# =============================================================================
+
+def git_run(args: List[str], cwd: str = None, timeout: int = 60) -> subprocess.CompletedProcess:
+    """
+    Execute a git command via subprocess.run().
+
+    Args:
+        args: List of arguments to pass to git (without 'git' prefix)
+        cwd: Working directory for the command
+        timeout: Timeout in seconds (default 60)
+
+    Returns:
+        subprocess.CompletedProcess with stdout/stderr captured
+
+    Raises:
+        subprocess.CalledProcessError: If git command fails
+        subprocess.TimeoutExpired: If command times out
+    """
+    cmd = ['git'] + args
+    result = subprocess.run(
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=timeout
+    )
+    return result
+
+
+def git_url_parse(url: str) -> Dict[str, str]:
+    """
+    Parse a Git URL into components.
+
+    Supports formats:
+    - git@host:user/repo.git (SSH)
+    - git+https://host/user/repo.git (HTTPS)
+    - git+file:///path/to/repo (Local file)
+
+    Args:
+        url: Git URL to parse
+
+    Returns:
+        Dictionary with keys: protocol, host, path, original_url
+        protocol: 'ssh', 'https', or 'file'
+    """
+    result = {'original_url': url}
+
+    if url.startswith('git@'):
+        # SSH format: git@host:user/repo.git
+        result['protocol'] = 'ssh'
+        # Split on : to get host and path
+        parts = url[4:].split(':', 1)
+        result['host'] = parts[0]
+        result['path'] = parts[1] if len(parts) > 1 else ''
+        result['git_url'] = url  # Already in git format
+
+    elif url.startswith('git+https://'):
+        # HTTPS format: git+https://host/path/repo.git
+        result['protocol'] = 'https'
+        # Remove git+ prefix for actual git URL
+        actual_url = url[4:]  # Remove 'git+' prefix
+        from urllib.parse import urlparse
+        parsed = urlparse(actual_url)
+        result['host'] = parsed.netloc
+        result['path'] = parsed.path.lstrip('/')
+        result['git_url'] = actual_url
+
+    elif url.startswith('git+file://'):
+        # Local file format: git+file:///path/to/repo
+        result['protocol'] = 'file'
+        result['host'] = ''
+        result['path'] = url[11:]  # Remove 'git+file://' prefix
+        result['git_url'] = 'file://' + result['path']
+
+    else:
+        raise ValueError(f"Unsupported Git URL format: {url}")
+
+    return result
+
+
+def remote_type_detect(url: str) -> str:
+    """
+    Detect the type of remote from URL.
+
+    Args:
+        url: Remote URL
+
+    Returns:
+        Remote type: 'file', 'git-ssh', 'git-https', 'git-file', 'http', 'https'
+    """
+    if url.startswith('file://'):
+        return 'file'
+    elif url.startswith('git@'):
+        return 'git-ssh'
+    elif url.startswith('git+https://'):
+        return 'git-https'
+    elif url.startswith('git+file://'):
+        return 'git-file'
+    elif url.startswith('https://'):
+        return 'https'
+    elif url.startswith('http://'):
+        return 'http'
+    else:
+        return 'unknown'
+
+
+def git_cache_path(remote_name: str) -> Path:
+    """
+    Get the cache path for a Git remote repository.
+
+    Args:
+        remote_name: Name of the remote
+
+    Returns:
+        Path to the cached repository directory
+    """
+    ouverture_dir = directory_get_ouverture()
+    return ouverture_dir / 'cache' / 'git' / remote_name
+
+
+def git_clone_or_fetch(git_url: str, local_path: Path) -> bool:
+    """
+    Clone a Git repository if it doesn't exist, or fetch if it does.
+
+    Args:
+        git_url: Git URL (SSH, HTTPS, or file://)
+        local_path: Local path to clone/fetch to
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if local_path.exists() and (local_path / '.git').exists():
+        # Repository exists, fetch updates
+        result = git_run(['fetch', 'origin'], cwd=str(local_path))
+        if result.returncode != 0:
+            print(f"Warning: git fetch failed: {result.stderr}", file=sys.stderr)
+            return False
+
+        # Pull changes (fast-forward only)
+        result = git_run(['pull', '--ff-only', 'origin', 'main'], cwd=str(local_path))
+        if result.returncode != 0:
+            # Try 'master' branch if 'main' fails
+            result = git_run(['pull', '--ff-only', 'origin', 'master'], cwd=str(local_path))
+            if result.returncode != 0:
+                print(f"Warning: git pull failed: {result.stderr}", file=sys.stderr)
+                return False
+        return True
+    else:
+        # Clone repository
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+        result = git_run(['clone', git_url, str(local_path)])
+        if result.returncode != 0:
+            print(f"Error: git clone failed: {result.stderr}", file=sys.stderr)
+            return False
+        return True
+
+
+def git_commit_and_push(local_path: Path, message: str) -> bool:
+    """
+    Stage all changes, commit, and push to remote.
+
+    Args:
+        local_path: Path to the Git repository
+        message: Commit message
+
+    Returns:
+        True if successful, False otherwise
+    """
+    cwd = str(local_path)
+
+    # Stage all changes
+    result = git_run(['add', '.'], cwd=cwd)
+    if result.returncode != 0:
+        print(f"Error: git add failed: {result.stderr}", file=sys.stderr)
+        return False
+
+    # Check if there are changes to commit
+    result = git_run(['diff', '--cached', '--quiet'], cwd=cwd)
+    if result.returncode == 0:
+        # No changes to commit
+        print("No changes to commit")
+        return True
+
+    # Commit changes
+    result = git_run(['commit', '-m', message], cwd=cwd)
+    if result.returncode != 0:
+        print(f"Error: git commit failed: {result.stderr}", file=sys.stderr)
+        return False
+
+    # Push to remote
+    result = git_run(['push', 'origin', 'HEAD'], cwd=cwd)
+    if result.returncode != 0:
+        print(f"Error: git push failed: {result.stderr}", file=sys.stderr)
+        return False
+
+    return True
+
+
 def command_remote_add(name: str, url: str):
     """
     Add a remote repository.
 
     Args:
         name: Remote name
-        url: Remote URL (HTTP/HTTPS or file://)
+        url: Remote URL. Supported formats:
+            - file:///path/to/pool (direct file copy)
+            - git@host:user/repo.git (Git SSH)
+            - git+https://host/user/repo.git (Git HTTPS)
+            - git+file:///path/to/repo (Local Git repository)
     """
     config = config_read()
 
@@ -868,17 +1101,25 @@ def command_remote_add(name: str, url: str):
         print(f"Error: Remote '{name}' already exists", file=sys.stderr)
         sys.exit(1)
 
-    # Validate URL format
-    if not (url.startswith('http://') or url.startswith('https://') or url.startswith('file://')):
-        print(f"Error: Invalid URL format. Must start with http://, https://, or file://", file=sys.stderr)
+    # Detect remote type
+    remote_type = remote_type_detect(url)
+
+    if remote_type == 'unknown':
+        print(f"Error: Invalid URL format: {url}", file=sys.stderr)
+        print("Supported formats:", file=sys.stderr)
+        print("  file:///path/to/pool          - Direct file copy", file=sys.stderr)
+        print("  git@host:user/repo.git        - Git SSH", file=sys.stderr)
+        print("  git+https://host/user/repo    - Git HTTPS", file=sys.stderr)
+        print("  git+file:///path/to/repo      - Local Git repository", file=sys.stderr)
         sys.exit(1)
 
     config['remotes'][name] = {
-        'url': url
+        'url': url,
+        'type': remote_type
     }
 
     config_write(config)
-    print(f"Added remote '{name}': {url}")
+    print(f"Added remote '{name}': {url} (type: {remote_type})")
 
 
 def command_remote_remove(name: str):
@@ -921,6 +1162,8 @@ def command_remote_pull(name: str):
     Args:
         name: Remote name to pull from
     """
+    import shutil
+
     config = config_read()
 
     if name not in config['remotes']:
@@ -929,17 +1172,13 @@ def command_remote_pull(name: str):
 
     remote = config['remotes'][name]
     url = remote['url']
+    remote_type = remote.get('type', remote_type_detect(url))
 
     print(f"Pulling from remote '{name}': {url}")
     print()
 
-    # TODO: Implement actual network operations
-    # For file:// URLs, we could copy from local filesystem
-    # For http:// and https:// URLs, we would need a server API
-
-    if url.startswith('file://'):
-        # Local file system remote
-        import shutil
+    if remote_type == 'file':
+        # Local file system remote (direct copy)
         remote_path = Path(url[7:])  # Remove file:// prefix
 
         if not remote_path.exists():
@@ -947,9 +1186,9 @@ def command_remote_pull(name: str):
             sys.exit(1)
 
         # Copy functions from remote to local pool
-        local_ouverture = directory_get_ouverture()
-        local_objects = local_ouverture / 'objects'
-        remote_objects = remote_path / 'objects'
+        local_pool = directory_get_pool()
+        local_objects = local_pool
+        remote_objects = remote_path
 
         if not remote_objects.exists():
             print(f"Error: Remote objects directory not found: {remote_objects}", file=sys.stderr)
@@ -958,21 +1197,52 @@ def command_remote_pull(name: str):
         # Copy all objects
         pulled_count = 0
         for item in remote_objects.rglob('*.json'):
-            # Compute relative path
             rel_path = item.relative_to(remote_objects)
             local_item = local_objects / rel_path
 
-            # Only copy if doesn't exist locally
             if not local_item.exists():
                 local_item.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, local_item)
                 pulled_count += 1
 
         print(f"Pulled {pulled_count} new functions from '{name}'")
+
+    elif remote_type in ('git-ssh', 'git-https', 'git-file'):
+        # Git remote - clone/fetch then copy objects
+        parsed = git_url_parse(url)
+        cache_path = git_cache_path(name)
+
+        print(f"Syncing Git repository to {cache_path}...")
+        if not git_clone_or_fetch(parsed['git_url'], cache_path):
+            print("Error: Failed to sync Git repository", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy functions from cached repository to local pool
+        local_pool = directory_get_pool()
+        local_objects = local_pool
+        remote_objects = cache_path
+
+        if not remote_objects.exists():
+            print(f"Warning: No objects directory in remote repository")
+            print("Pulled 0 new functions from '{name}'")
+            return
+
+        # Copy all objects
+        pulled_count = 0
+        for item in remote_objects.rglob('*.json'):
+            rel_path = item.relative_to(remote_objects)
+            local_item = local_objects / rel_path
+
+            if not local_item.exists():
+                local_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, local_item)
+                pulled_count += 1
+
+        print(f"Pulled {pulled_count} new functions from '{name}'")
+
     else:
-        # HTTP/HTTPS remote
-        print("Error: HTTP/HTTPS remotes not yet implemented", file=sys.stderr)
-        print("TODO: Implement REST API client for pulling functions", file=sys.stderr)
+        # HTTP/HTTPS remote (not Git)
+        print(f"Error: Remote type '{remote_type}' not yet implemented", file=sys.stderr)
         sys.exit(1)
 
 
@@ -983,6 +1253,8 @@ def command_remote_push(name: str):
     Args:
         name: Remote name to push to
     """
+    import shutil
+
     config = config_read()
 
     if name not in config['remotes']:
@@ -991,26 +1263,22 @@ def command_remote_push(name: str):
 
     remote = config['remotes'][name]
     url = remote['url']
+    remote_type = remote.get('type', remote_type_detect(url))
 
     print(f"Pushing to remote '{name}': {url}")
     print()
 
-    # TODO: Implement actual network operations
-    # For file:// URLs, we could copy to local filesystem
-    # For http:// and https:// URLs, we would need a server API
-
-    if url.startswith('file://'):
-        # Local file system remote
-        import shutil
+    if remote_type == 'file':
+        # Local file system remote (direct copy)
         remote_path = Path(url[7:])  # Remove file:// prefix
 
         # Create remote directory if it doesn't exist
         remote_path.mkdir(parents=True, exist_ok=True)
 
         # Copy functions from local pool to remote
-        local_ouverture = directory_get_ouverture()
-        local_objects = local_ouverture / 'objects'
-        remote_objects = remote_path / 'objects'
+        local_pool = directory_get_pool()
+        local_objects = local_pool
+        remote_objects = remote_path
 
         if not local_objects.exists():
             print("Error: Local objects directory not found", file=sys.stderr)
@@ -1019,21 +1287,63 @@ def command_remote_push(name: str):
         # Copy all objects
         pushed_count = 0
         for item in local_objects.rglob('*.json'):
-            # Compute relative path
             rel_path = item.relative_to(local_objects)
             remote_item = remote_objects / rel_path
 
-            # Only copy if doesn't exist remotely
             if not remote_item.exists():
                 remote_item.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(item, remote_item)
                 pushed_count += 1
 
         print(f"Pushed {pushed_count} new functions to '{name}'")
+
+    elif remote_type in ('git-ssh', 'git-https', 'git-file'):
+        # Git remote - sync repo, copy objects, commit and push
+        parsed = git_url_parse(url)
+        cache_path = git_cache_path(name)
+
+        # First, ensure we have the latest from remote
+        print(f"Syncing Git repository from {parsed['git_url']}...")
+        if not git_clone_or_fetch(parsed['git_url'], cache_path):
+            print("Error: Failed to sync Git repository", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy functions from local pool to cached repository
+        local_pool = directory_get_pool()
+        local_objects = local_pool
+        remote_objects = cache_path
+
+        if not local_objects.exists():
+            print("Error: Local objects directory not found", file=sys.stderr)
+            sys.exit(1)
+
+        # Copy all new objects to cache
+        pushed_count = 0
+        for item in local_objects.rglob('*.json'):
+            rel_path = item.relative_to(local_objects)
+            remote_item = remote_objects / rel_path
+
+            if not remote_item.exists():
+                remote_item.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, remote_item)
+                pushed_count += 1
+
+        if pushed_count == 0:
+            print("No new functions to push")
+            return
+
+        # Commit and push changes
+        print(f"Committing {pushed_count} new functions...")
+        commit_msg = f"Add {pushed_count} function(s) from ouverture push"
+        if not git_commit_and_push(cache_path, commit_msg):
+            print("Error: Failed to commit and push changes", file=sys.stderr)
+            sys.exit(1)
+
+        print(f"Pushed {pushed_count} new functions to '{name}'")
+
     else:
-        # HTTP/HTTPS remote
-        print("Error: HTTP/HTTPS remotes not yet implemented", file=sys.stderr)
-        print("TODO: Implement REST API client for pushing functions", file=sys.stderr)
+        # HTTP/HTTPS remote (not Git)
+        print(f"Error: Remote type '{remote_type}' not yet implemented", file=sys.stderr)
         sys.exit(1)
 
 
@@ -1059,6 +1369,98 @@ def dependencies_extract(normalized_code: str) -> List[str]:
                 dependencies.append(actual_hash)
 
     return dependencies
+
+
+def dependencies_resolve(func_hash: str) -> List[str]:
+    """
+    Resolve all dependencies transitively and return them in topological order.
+
+    The function itself is included at the end of the list.
+    Dependencies are listed before the functions that depend on them.
+
+    Args:
+        func_hash: Function hash to resolve dependencies for
+
+    Returns:
+        List of function hashes in topological order (dependencies first, target last)
+    """
+    resolved = []
+    visited = set()
+
+    def visit(hash_value: str):
+        if hash_value in visited:
+            return
+        visited.add(hash_value)
+
+        # Detect version and load function data
+        version = schema_detect_version(hash_value)
+        if version is None:
+            raise ValueError(f"Function not found: {hash_value}")
+
+        # Load function to get its code
+        if version == 0:
+            # v0: Load from single JSON file
+            pool_dir = directory_get_pool()
+            func_path = pool_dir / hash_value[:2] / f'{hash_value[2:]}.json'
+            with open(func_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            normalized_code = data.get('normalized_code', '')
+        else:
+            # v1: Load from object.json
+            func_data = function_load_v1(hash_value)
+            normalized_code = func_data['normalized_code']
+
+        # Extract and visit dependencies first
+        deps = dependencies_extract(normalized_code)
+        for dep in deps:
+            visit(dep)
+
+        # Add this function after its dependencies
+        resolved.append(hash_value)
+
+    visit(func_hash)
+    return resolved
+
+
+def dependencies_bundle(hashes: List[str], output_dir: Path) -> Path:
+    """
+    Bundle function files to an output directory.
+
+    Copies all function files maintaining the v1 directory structure.
+
+    Args:
+        hashes: List of function hashes to bundle
+        output_dir: Directory to copy files to
+
+    Returns:
+        Path to the output directory
+    """
+    import shutil
+
+    pool_dir = directory_get_pool()
+    output_dir = Path(output_dir)
+    output_objects = output_dir
+    output_objects.mkdir(parents=True, exist_ok=True)
+
+    for func_hash in hashes:
+        version = schema_detect_version(func_hash)
+        if version is None:
+            raise ValueError(f"Function not found: {func_hash}")
+
+        if version == 0:
+            # v0: Copy single JSON file
+            src = pool_dir / func_hash[:2] / f'{func_hash[2:]}.json'
+            dst = output_objects / func_hash[:2] / f'{func_hash[2:]}.json'
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        else:
+            # v1: Copy entire function directory
+            src_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+            dst_dir = output_objects / 'sha256' / func_hash[:2] / func_hash[2:]
+            if src_dir.exists():
+                shutil.copytree(src_dir, dst_dir, dirs_exist_ok=True)
+
+    return output_dir
 
 
 def command_review(hash_value: str):
@@ -1155,17 +1557,16 @@ def command_log():
 
     Lists all functions with metadata (timestamp, author, hash).
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         print("No functions in pool")
         return
 
     functions = []
 
     # Scan for v1 functions (objects/sha256/XX/YYY.../object.json)
-    v1_dir = objects_dir / 'sha256'
+    v1_dir = pool_dir / 'sha256'
     if v1_dir.exists():
         for hash_prefix_dir in v1_dir.iterdir():
             if not hash_prefix_dir.is_dir():
@@ -1206,7 +1607,7 @@ def command_log():
                     continue
 
     # Scan for v0 functions (objects/XX/YYY.json)
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -1264,17 +1665,16 @@ def command_search(query: List[str]):
 
     search_terms = [term.lower() for term in query]
 
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         print("No functions in pool")
         return
 
     results = []
 
     # Scan for v1 functions
-    v1_dir = objects_dir / 'sha256'
+    v1_dir = pool_dir / 'sha256'
     if v1_dir.exists():
         for hash_prefix_dir in v1_dir.iterdir():
             if not hash_prefix_dir.is_dir():
@@ -1330,7 +1730,7 @@ def command_search(query: List[str]):
                     continue
 
     # Scan for v0 functions
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -1777,10 +2177,10 @@ def docstring_replace(code: str, new_docstring: str) -> str:
     """
     tree = ast.parse(code)
 
-    # Find the function definition
+    # Find the function definition (sync or async)
     function_def = None
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             function_def = node
             break
 
@@ -1821,9 +2221,8 @@ def function_load_v0(hash_value: str, lang: str) -> Tuple[str, Dict[str, str], D
     Returns (normalized_code, name_mapping, alias_mapping, docstring)
     """
     # Build file path using configurable ouverture directory
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
-    hash_dir = objects_dir / hash_value[:2]
+    pool_dir = directory_get_pool()
+    hash_dir = pool_dir / hash_value[:2]
     json_path = hash_dir / f'{hash_value[2:]}.json'
 
     # Check if file exists
@@ -1867,11 +2266,10 @@ def function_load_v1(hash_value: str) -> Dict[str, any]:
     Returns:
         Dictionary with schema_version, hash, hash_algorithm, normalized_code, encoding, metadata
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Build path: objects/sha256/XX/YYYYYY.../object.json
-    func_dir = objects_dir / 'sha256' / hash_value[:2] / hash_value[2:]
+    func_dir = pool_dir / 'sha256' / hash_value[:2] / hash_value[2:]
     object_json = func_dir / 'object.json'
 
     # Check if file exists
@@ -1903,11 +2301,10 @@ def mappings_list_v1(func_hash: str, lang: str) -> list:
     Returns:
         List of (mapping_hash, comment) tuples
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Build path: objects/sha256/XX/YYYYYY.../lang/
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     lang_dir = func_dir / lang
 
     # Check if language directory exists
@@ -1963,11 +2360,10 @@ def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str) -> Tuple[str, 
     Returns:
         Tuple of (docstring, name_mapping, alias_mapping, comment)
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Build path: objects/sha256/XX/Y.../lang/sha256/ZZ/W.../mapping.json
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     mapping_dir = func_dir / lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:]
     mapping_json = mapping_dir / 'mapping.json'
 
@@ -2253,9 +2649,8 @@ def schema_migrate_function_v0_to_v1(func_hash: str, keep_v0: bool = False):
         sys.exit(1)
 
     # Load v0 data
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
-    v0_path = objects_dir / func_hash[:2] / f'{func_hash[2:]}.json'
+    pool_dir = directory_get_pool()
+    v0_path = pool_dir / func_hash[:2] / f'{func_hash[2:]}.json'
 
     try:
         with open(v0_path, 'r', encoding='utf-8') as f:
@@ -2317,15 +2712,14 @@ def schema_migrate_all_v0_to_v1(keep_v0: bool = False, dry_run: bool = False) ->
     Returns:
         List of function hashes that were (or would be) migrated
     """
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Find all v0 files
     v0_functions = []
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         return v0_functions
 
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -2376,11 +2770,10 @@ def schema_validate_v1(func_hash: str) -> tuple:
         Tuple of (is_valid, errors) where errors is a list of error messages
     """
     errors = []
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
     # Check object.json exists
-    func_dir = objects_dir / 'sha256' / func_hash[:2] / func_hash[2:]
+    func_dir = pool_dir / 'sha256' / func_hash[:2] / func_hash[2:]
     object_json = func_dir / 'object.json'
 
     if not object_json.exists():
@@ -2448,16 +2841,15 @@ def command_caller(hash_value: str):
         print(f"Error: Function not found: {hash_value}", file=sys.stderr)
         sys.exit(1)
 
-    ouverture_dir = directory_get_ouverture()
-    objects_dir = ouverture_dir / 'objects'
+    pool_dir = directory_get_pool()
 
-    if not objects_dir.exists():
+    if not pool_dir.exists():
         return
 
     callers = []
 
     # Scan for v1 functions (objects/sha256/XX/YYY.../object.json)
-    v1_dir = objects_dir / 'sha256'
+    v1_dir = pool_dir / 'sha256'
     if v1_dir.exists():
         for hash_prefix_dir in v1_dir.iterdir():
             if not hash_prefix_dir.is_dir():
@@ -2486,7 +2878,7 @@ def command_caller(hash_value: str):
                     continue
 
     # Scan for v0 functions (objects/XX/YYY.json)
-    for hash_prefix_dir in objects_dir.iterdir():
+    for hash_prefix_dir in pool_dir.iterdir():
         if not hash_prefix_dir.is_dir():
             continue
         if hash_prefix_dir.name == 'sha256':
@@ -2545,9 +2937,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
 
     # Load the function's normalized code
     if what_version == 0:
-        ouverture_dir = directory_get_ouverture()
-        objects_dir = ouverture_dir / 'objects'
-        v0_path = objects_dir / what_hash[:2] / f'{what_hash[2:]}.json'
+        pool_dir = directory_get_pool()
+        pool_dir = pool_dir
+        v0_path = pool_dir / what_hash[:2] / f'{what_hash[2:]}.json'
         with open(v0_path, 'r', encoding='utf-8') as f:
             what_data = json.load(f)
         normalized_code = what_data['normalized_code']
@@ -2557,9 +2949,9 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
         func_data = function_load_v1(what_hash)
         normalized_code = func_data['normalized_code']
         # Get all languages from v1 directory structure
-        ouverture_dir = directory_get_ouverture()
-        objects_dir = ouverture_dir / 'objects'
-        func_dir = objects_dir / 'sha256' / what_hash[:2] / what_hash[2:]
+        pool_dir = directory_get_pool()
+        pool_dir = pool_dir
+        func_dir = pool_dir / 'sha256' / what_hash[:2] / what_hash[2:]
         languages = []
         for item in func_dir.iterdir():
             if item.is_dir() and len(item.name) == 3:
@@ -2620,7 +3012,7 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
     # First, extract the code without docstring
     new_tree = ast.parse(new_normalized_code)
     for node in new_tree.body:
-        if isinstance(node, ast.FunctionDef):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             _, func_without_docstring = docstring_extract(node)
             # Rebuild module without docstring for hashing
             imports = [n for n in new_tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
@@ -2672,6 +3064,371 @@ def command_refactor(what_hash: str, from_hash: str, to_hash: str):
 
     # Print the result command
     print(f"ouverture.py show {new_hash}")
+
+
+# =============================================================================
+# Compilation Functions
+# =============================================================================
+
+def compile_generate_config(func_hash: str, lang: str, output_name: str) -> str:
+    """
+    Generate PyOxidizer configuration for compiling a function.
+
+    Args:
+        func_hash: Function hash to compile
+        lang: Language for the function
+        output_name: Name for the output executable
+
+    Returns:
+        PyOxidizer configuration as a string
+    """
+    return f'''# PyOxidizer configuration for {output_name}
+# Generated by ouverture.py compile
+
+def make_dist():
+    return default_python_distribution()
+
+def make_exe(dist):
+    python_config = dist.make_python_interpreter_config()
+    python_config.run_command = """
+import sys
+sys.path.insert(0, '.')
+
+# Import ouverture runtime
+from ouverture_runtime import execute_function
+
+# Execute the function
+result = execute_function('{func_hash}', '{lang}', sys.argv[1:])
+if result is not None:
+    print(result)
+"""
+
+    exe = dist.to_python_executable(
+        name="{output_name}",
+        config=python_config,
+    )
+
+    exe.add_python_resource(dist.read_package_root(
+        path=".",
+        packages=["ouverture_runtime"],
+    ))
+
+    return exe
+
+def make_embedded_resources(exe):
+    return exe.to_embedded_resources()
+
+def make_install(exe):
+    files = FileManifest()
+    files.add_python_resource(".", exe)
+    return files
+
+register_target("dist", make_dist)
+register_target("exe", make_exe, depends=["dist"])
+register_target("resources", make_embedded_resources, depends=["exe"], default_build_script=True)
+register_target("install", make_install, depends=["exe"], default=True)
+
+resolve_targets()
+'''
+
+
+def compile_generate_runtime(func_hash: str, lang: str, output_dir: Path) -> Path:
+    """
+    Generate the ouverture runtime module for the compiled executable.
+
+    Args:
+        func_hash: Function hash to compile
+        lang: Language for the function
+        output_dir: Directory to write runtime to
+
+    Returns:
+        Path to the generated runtime module
+    """
+    runtime_dir = output_dir / 'ouverture_runtime'
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy the necessary parts of ouverture for runtime
+    runtime_code = '''"""
+Ouverture Runtime - Minimal runtime for compiled functions
+"""
+import ast
+import json
+import os
+import sys
+from pathlib import Path
+
+
+OUVERTURE_IMPORT_PREFIX = "object_"
+
+
+def directory_get_bundle() -> Path:
+    """Get the bundled objects directory."""
+    # When compiled, objects are bundled alongside the executable
+    exe_dir = Path(sys.executable).parent
+    return exe_dir / 'bundle'
+
+
+def function_load_v1(hash_value: str):
+    """Load function from v1 format."""
+    bundle_dir = directory_get_bundle()
+    func_dir = bundle_dir / 'sha256' / hash_value[:2] / hash_value[2:]
+    object_path = func_dir / 'object.json'
+
+    if not object_path.exists():
+        raise FileNotFoundError(f"Function not found: {hash_value}")
+
+    with open(object_path, 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+
+def mapping_load_v1(func_hash: str, lang: str, mapping_hash: str):
+    """Load mapping from v1 format."""
+    bundle_dir = directory_get_bundle()
+    mapping_path = (bundle_dir / 'sha256' / func_hash[:2] / func_hash[2:] /
+                   lang / 'sha256' / mapping_hash[:2] / mapping_hash[2:] / 'mapping.json')
+
+    with open(mapping_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    return (
+        data.get('docstring', ''),
+        data.get('name_mapping', {}),
+        data.get('alias_mapping', {}),
+        data.get('comment', '')
+    )
+
+
+def mappings_list_v1(func_hash: str, lang: str):
+    """List mappings for a function in a language."""
+    bundle_dir = directory_get_bundle()
+    lang_dir = bundle_dir / 'sha256' / func_hash[:2] / func_hash[2:] / lang / 'sha256'
+
+    if not lang_dir.exists():
+        return []
+
+    mappings = []
+    for hash_dir in lang_dir.iterdir():
+        if hash_dir.is_dir():
+            for mapping_dir in hash_dir.iterdir():
+                if mapping_dir.is_dir():
+                    mapping_path = mapping_dir / 'mapping.json'
+                    if mapping_path.exists():
+                        with open(mapping_path, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        mapping_hash = hash_dir.name + mapping_dir.name
+                        mappings.append((mapping_hash, data.get('comment', '')))
+
+    return mappings
+
+
+def function_load(hash_value: str, lang: str, mapping_hash: str = None):
+    """Load function with language mapping."""
+    func_data = function_load_v1(hash_value)
+    normalized_code = func_data['normalized_code']
+
+    mappings = mappings_list_v1(hash_value, lang)
+    if not mappings:
+        raise ValueError(f"No mapping found for language: {lang}")
+
+    if mapping_hash:
+        selected_hash = mapping_hash
+    else:
+        selected_hash = mappings[0][0]
+
+    docstring, name_mapping, alias_mapping, comment = mapping_load_v1(hash_value, lang, selected_hash)
+
+    return normalized_code, name_mapping, alias_mapping, docstring
+
+
+def code_denormalize(normalized_code: str, name_mapping: dict, alias_mapping: dict) -> str:
+    """Denormalize code by applying reverse name mappings."""
+    tree = ast.parse(normalized_code)
+
+    hash_to_alias = dict(alias_mapping)
+
+    class Denormalizer(ast.NodeTransformer):
+        def visit_Name(self, node):
+            if node.id in name_mapping:
+                node.id = name_mapping[node.id]
+            return node
+
+        def visit_arg(self, node):
+            if node.arg in name_mapping:
+                node.arg = name_mapping[node.arg]
+            return node
+
+        def visit_FunctionDef(self, node):
+            if node.name in name_mapping:
+                node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
+        def visit_AsyncFunctionDef(self, node):
+            if node.name in name_mapping:
+                node.name = name_mapping[node.name]
+            self.generic_visit(node)
+            return node
+
+    denormalizer = Denormalizer()
+    tree = denormalizer.visit(tree)
+
+    return ast.unparse(tree)
+
+
+def execute_function(func_hash: str, lang: str, args: list):
+    """Execute a function from the bundle."""
+    normalized_code, name_mapping, alias_mapping, docstring = function_load(func_hash, lang)
+    denormalized_code = code_denormalize(normalized_code, name_mapping, alias_mapping)
+
+    # Execute the function
+    namespace = {}
+    exec(denormalized_code, namespace)
+
+    # Find the function in namespace
+    func_name = name_mapping.get('_ouverture_v_0', '_ouverture_v_0')
+    func = namespace.get(func_name)
+
+    if func is None:
+        raise ValueError(f"Function {func_name} not found in code")
+
+    # Call the function with provided arguments
+    if args:
+        # Try to convert arguments to appropriate types
+        converted_args = []
+        for arg in args:
+            try:
+                # Try int first
+                converted_args.append(int(arg))
+            except ValueError:
+                try:
+                    # Try float
+                    converted_args.append(float(arg))
+                except ValueError:
+                    # Keep as string
+                    converted_args.append(arg)
+        return func(*converted_args)
+    else:
+        return func()
+'''
+
+    # Write __init__.py
+    init_path = runtime_dir / '__init__.py'
+    with open(init_path, 'w', encoding='utf-8') as f:
+        f.write(runtime_code)
+
+    return runtime_dir
+
+
+def command_compile(hash_with_lang: str, output_path: str = None):
+    """
+    Compile a function into a standalone executable.
+
+    Args:
+        hash_with_lang: Function hash with language suffix (HASH@lang)
+        output_path: Optional output path for the executable
+    """
+    import shutil
+
+    # Parse the hash and language
+    if '@' not in hash_with_lang:
+        print("Error: Missing language suffix. Use format: HASH@lang", file=sys.stderr)
+        sys.exit(1)
+
+    func_hash, lang = hash_with_lang.rsplit('@', 1)
+
+    # Validate hash format
+    if len(func_hash) != 64 or not all(c in '0123456789abcdef' for c in func_hash.lower()):
+        print(f"Error: Invalid hash format. Expected 64 hex characters. Got: {func_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate language code
+    if len(lang) != 3:
+        print(f"Error: Language code must be 3 characters (ISO 639-3). Got: {lang}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if function exists
+    version = schema_detect_version(func_hash)
+    if version is None:
+        print(f"Error: Function not found: {func_hash}", file=sys.stderr)
+        sys.exit(1)
+
+    # Check if PyOxidizer is available
+    result = subprocess.run(['pyoxidizer', '--version'], capture_output=True, text=True)
+    if result.returncode != 0:
+        print("Error: PyOxidizer not found. Please install it first:", file=sys.stderr)
+        print("  pip install pyoxidizer", file=sys.stderr)
+        print("  or: cargo install pyoxidizer", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Compiling function {func_hash[:8]}...@{lang}")
+
+    # Resolve dependencies
+    print("Resolving dependencies...")
+    try:
+        deps = dependencies_resolve(func_hash)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"  Found {len(deps)} function(s) to bundle")
+
+    # Create build directory
+    build_dir = Path(f'.ouverture_build_{func_hash[:8]}')
+    build_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Bundle dependencies
+        print("Bundling functions...")
+        bundle_dir = build_dir / 'bundle'
+        dependencies_bundle(deps, bundle_dir)
+
+        # Generate runtime
+        print("Generating runtime...")
+        compile_generate_runtime(func_hash, lang, build_dir)
+
+        # Generate PyOxidizer config
+        print("Generating PyOxidizer configuration...")
+        output_name = output_path if output_path else f'ouverture_{func_hash[:8]}'
+        config = compile_generate_config(func_hash, lang, output_name)
+
+        config_path = build_dir / 'pyoxidizer.bzl'
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(config)
+
+        # Build with PyOxidizer
+        print("Building executable...")
+        result = subprocess.run(
+            ['pyoxidizer', 'build', '--release'],
+            cwd=str(build_dir),
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            print(f"Error: PyOxidizer build failed:", file=sys.stderr)
+            print(result.stderr, file=sys.stderr)
+            sys.exit(1)
+
+        # Find the built executable
+        build_output = build_dir / 'build'
+        exe_found = False
+        for exe in build_output.rglob(output_name):
+            if exe.is_file():
+                final_path = Path(output_path) if output_path else Path(output_name)
+                shutil.copy2(exe, final_path)
+                exe_found = True
+                print(f"Executable created: {final_path}")
+                break
+
+        if not exe_found:
+            print("Warning: Could not find built executable")
+            print(f"Build output is in: {build_dir}")
+
+    finally:
+        # Optionally clean up build directory
+        pass  # Keep for debugging; user can delete manually
+
+    print("Compilation complete!")
 
 
 def main():
@@ -2766,6 +3523,11 @@ def main():
     refactor_parser.add_argument('from_hash', metavar='from', help='Dependency hash to replace')
     refactor_parser.add_argument('to_hash', metavar='to', help='New dependency hash')
 
+    # Compile command
+    compile_parser = subparsers.add_parser('compile', help='Compile function to standalone executable')
+    compile_parser.add_argument('hash', help='Function hash with language (e.g., abc123...@eng)')
+    compile_parser.add_argument('--output', '-o', help='Output executable path')
+
     args = parser.parse_args()
 
     if args.command == 'init':
@@ -2821,6 +3583,8 @@ def main():
         command_caller(args.hash)
     elif args.command == 'refactor':
         command_refactor(args.what, args.from_hash, args.to_hash)
+    elif args.command == 'compile':
+        command_compile(args.hash, args.output)
     else:
         parser.print_help()
 
