@@ -360,20 +360,6 @@ def calculate_average(numbers):
     ...
 ```
 
-### Translation Requires Migration
-
-When translating a v0 function, automatic migration is triggered:
-
-```bash
-$ ouverture.py translate abc123...@eng fra
-Function abc123... is in schema v0.
-Auto-migrating to v1 before adding translation...
-Migration successful. V0 file deleted.
-Adding French translation...
-```
-
-**Rationale**: Can't add v1 mappings to v0 functions. Migration is required for new translations.
-
 ### User Guidance
 
 **For users with existing v0 pools**:
