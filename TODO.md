@@ -7,6 +7,33 @@ Context sources:
 - `CLAUDE.md` - Technical architecture and development conventions (single-file design)
 - `README.md` - Project vision and philosophy
 
+## Priority 0: Git Remotes, async def / await Support, Compilation and Applications
+
+### Git Remotes
+- Implement `ouverture.py remote add NAME git@host:user/repo.git` for Git remotes
+- Implement `ouverture.py remote add NAME https://host/user/repo.git` for Git HTTPS remotes
+- Store functions in a Git repository structure compatible with ouverture pool format
+- Support authentication via SSH keys and Git credential helpers
+- Implement `remote pull` and `remote push` for Git remotes
+
+### Async/Await Support
+- Add support for `async def` functions (ast.AsyncFunctionDef)
+- Handle `await` expressions in normalization
+- Normalize async function names to `_ouverture_v_0` like regular functions
+- Document async function behavior and limitations
+
+### Compilation
+- Implement `ouverture.py compile HASH@lang` command to generate standalone executable
+- Use PyOxidizer to bundle Python interpreter with function and dependencies
+- Resolve and include all ouverture pool dependencies transitively
+- Generate platform-specific binaries (Linux, macOS, Windows)
+- Support `--output` flag to specify output path
+
+### Applications
+- **p5py**: Port p5.js creative coding library to Python using ouverture for function sharing
+- **asyncify**: Tool for on-the-fly rewriting of synchronous Python code to async/await style
+- **todo-flask**: Reference todo application built with Flask demonstrating ouverture integration
+
 ## Priority 1: Remote HTTP/HTTPS Support
 
 ### HTTP/HTTPS Remotes
