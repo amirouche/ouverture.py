@@ -216,24 +216,21 @@ Tests use `unittest.mock.patch` to:
 
 ## Continuous Integration
 
-These tests are designed to be run in CI/CD pipelines. Example GitHub Actions workflow:
+The project includes a GitHub Actions workflow that automatically runs tests on every push and pull request.
 
-```yaml
-name: Tests
+**Workflow file**: `.github/workflows/test.yml`
 
-on: [push, pull_request]
+**Features**:
+- Tests on multiple Python versions (3.9, 3.10, 3.11, 3.12)
+- Runs full test suite with verbose output
+- Generates coverage report on Python 3.11
+- Uploads coverage to Codecov (optional)
+- Runs on pushes to `main` and `claude/*` branches
+- Runs on all pull requests to `main`
 
-jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-python@v2
-        with:
-          python-version: '3.9'
-      - run: pip install -r requirements-dev.txt
-      - run: pytest -v --cov=ouverture
-```
+The workflow automatically installs dependencies from `requirements-dev.txt` and runs pytest. All tests must pass before merging pull requests.
+
+**Status**: Check the Actions tab on GitHub to see test results for recent commits and PRs.
 
 ## Contributing
 
