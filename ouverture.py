@@ -16,6 +16,11 @@ from typing import Dict, Set, Tuple, List
 # Get all Python built-in names
 PYTHON_BUILTINS = set(dir(builtins))
 
+# Prefix for ouverture.pool imports to ensure valid Python identifiers
+# SHA256 hashes can start with digits (0-9), which are invalid as Python identifiers
+# By prefixing with "object_", we ensure all import names are valid
+OUVERTURE_IMPORT_PREFIX = "object_"
+
 
 class ASTNormalizer(ast.NodeTransformer):
     """Normalizes an AST by renaming variables and functions"""
@@ -184,22 +189,39 @@ def imports_rewrite_ouverture(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], 
     """
     Remove aliases from 'ouverture' imports and track them for later restoration.
     Returns (new_imports, alias_mapping)
-    alias_mapping maps: imported_function_hash -> alias_in_lang
+    alias_mapping maps: actual_function_hash (without prefix) -> alias_in_lang
+
+    Input format expected:
+        from ouverture.pool import object_c0ff33 as kawa
+
+    Output:
+        - import becomes: from ouverture.pool import object_c0ff33
+        - alias_mapping stores: {"c0ff33...": "kawa"} (actual hash without object_ prefix)
     """
     new_imports = []
     alias_mapping = {}
 
     for imp in imports:
         if isinstance(imp, ast.ImportFrom) and imp.module == 'ouverture.pool':
-            # Rewrite: from ouverture.pool import c0ffeebad as kawa
-            # To: from ouverture.pool import c0ffeebad
+            # Rewrite: from ouverture.pool import object_c0ffeebad as kawa
+            # To: from ouverture.pool import object_c0ffeebad
             new_names = []
             for alias in imp.names:
-                # Track the alias mapping
+                import_name = alias.name  # e.g., "object_c0ff33..."
+
+                # Extract actual hash by stripping the prefix
+                if import_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                    actual_hash = import_name[len(OUVERTURE_IMPORT_PREFIX):]
+                else:
+                    # Backward compatibility: no prefix (shouldn't happen in new code)
+                    actual_hash = import_name
+
+                # Track the alias mapping using actual hash
                 if alias.asname:
-                    alias_mapping[alias.name] = alias.asname
-                # Create new import without alias
-                new_names.append(ast.alias(name=alias.name, asname=None))
+                    alias_mapping[actual_hash] = alias.asname
+
+                # Create new import without alias (but keep object_ prefix in import name)
+                new_names.append(ast.alias(name=import_name, asname=None))
 
             new_imp = ast.ImportFrom(
                 module='ouverture.pool',
@@ -216,16 +238,21 @@ def imports_rewrite_ouverture(imports: List[ast.stmt]) -> Tuple[List[ast.stmt], 
 def calls_replace_ouverture(tree: ast.AST, alias_mapping: Dict[str, str], name_mapping: Dict[str, str]):
     """
     Replace calls to aliased ouverture functions.
-    E.g., kawa(...) becomes c0ffeebad._ouverture_v_0(...)
+    E.g., kawa(...) becomes object_c0ffeebad._ouverture_v_0(...)
+
+    alias_mapping maps actual hash (without prefix) -> alias name
+    The replacement uses object_<hash> to match the import name.
     """
     class OuvertureCallReplacer(ast.NodeTransformer):
         def visit_Name(self, node):
             # If this name is an alias for an ouverture function
             for func_hash, alias in alias_mapping.items():
                 if node.id == alias:
-                    # Replace with c0ffeebad._ouverture_v_0
+                    # Replace with object_c0ffeebad._ouverture_v_0
+                    # Use prefixed name to match the import statement
+                    prefixed_name = OUVERTURE_IMPORT_PREFIX + func_hash
                     return ast.Attribute(
-                        value=ast.Name(id=func_hash, ctx=ast.Load()),
+                        value=ast.Name(id=prefixed_name, ctx=ast.Load()),
                         attr='_ouverture_v_0',
                         ctx=node.ctx
                     )
@@ -744,11 +771,14 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
     """
     Denormalize code by applying reverse name mappings.
     name_mapping: maps normalized names (_ouverture_v_X) to original names
-    alias_mapping: maps hash IDs to alias names (for ouverture imports)
+    alias_mapping: maps actual hash IDs (without object_ prefix) to alias names
+
+    Normalized code uses object_<hash> in imports and attributes.
+    This function restores the original aliases.
     """
     tree = ast.parse(normalized_code)
 
-    # Create reverse alias mapping: _ouverture_v_0 -> alias
+    # Create reverse alias mapping: actual_hash -> alias
     # We need to track which hashes should become which aliases
     hash_to_alias = {}
     for hash_id, alias in alias_mapping.items():
@@ -775,27 +805,43 @@ def code_denormalize(normalized_code: str, name_mapping: Dict[str, str], alias_m
             return node
 
         def visit_Attribute(self, node):
-            # Replace c0ffeebad._ouverture_v_0(...) with alias(...)
+            # Replace object_c0ffeebad._ouverture_v_0(...) with alias(...)
             if (isinstance(node.value, ast.Name) and
-                node.value.id in hash_to_alias and
                 node.attr == '_ouverture_v_0'):
-                # Return just the alias name
-                return ast.Name(id=hash_to_alias[node.value.id], ctx=node.ctx)
+                prefixed_name = node.value.id
+                # Strip object_ prefix to get actual hash
+                if prefixed_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                    actual_hash = prefixed_name[len(OUVERTURE_IMPORT_PREFIX):]
+                else:
+                    actual_hash = prefixed_name  # Backward compatibility
+
+                if actual_hash in hash_to_alias:
+                    # Return just the alias name
+                    return ast.Name(id=hash_to_alias[actual_hash], ctx=node.ctx)
             self.generic_visit(node)
             return node
 
         def visit_ImportFrom(self, node):
-            # Add aliases back to 'from ouverture.pool import X'
+            # Add aliases back to 'from ouverture.pool import object_X'
             if node.module == 'ouverture.pool':
                 node.module = 'ouverture.pool'
                 # Add aliases back
                 new_names = []
                 for alias_node in node.names:
-                    if alias_node.name in hash_to_alias:
+                    import_name = alias_node.name  # e.g., "object_c0ff33..."
+
+                    # Strip object_ prefix to get actual hash
+                    if import_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                        actual_hash = import_name[len(OUVERTURE_IMPORT_PREFIX):]
+                    else:
+                        actual_hash = import_name  # Backward compatibility
+
+                    if actual_hash in hash_to_alias:
                         # This hash should have an alias
+                        # Keep object_ prefix in import name
                         new_names.append(ast.alias(
-                            name=alias_node.name,
-                            asname=hash_to_alias[alias_node.name]
+                            name=import_name,
+                            asname=hash_to_alias[actual_hash]
                         ))
                     else:
                         new_names.append(alias_node)
@@ -996,7 +1042,7 @@ def dependencies_extract(normalized_code: str) -> List[str]:
     Extract ouverture dependencies from normalized code.
 
     Returns:
-        List of function hashes that this function depends on
+        List of actual function hashes (without object_ prefix) that this function depends on
     """
     dependencies = []
     tree = ast.parse(normalized_code)
@@ -1004,8 +1050,13 @@ def dependencies_extract(normalized_code: str) -> List[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module == 'ouverture.pool':
             for alias in node.names:
-                # alias.name is the hash
-                dependencies.append(alias.name)
+                import_name = alias.name  # e.g., "object_c0ff33..."
+                # Strip object_ prefix to get actual hash
+                if import_name.startswith(OUVERTURE_IMPORT_PREFIX):
+                    actual_hash = import_name[len(OUVERTURE_IMPORT_PREFIX):]
+                else:
+                    actual_hash = import_name  # Backward compatibility
+                dependencies.append(actual_hash)
 
     return dependencies
 
@@ -1372,10 +1423,10 @@ def dependencies_load_recursive(func_hash: str, lang: str, namespace: dict, load
     Recursively load a function and all its dependencies into a namespace.
 
     Creates a module-like object for each dependency that can be accessed as:
-    HASH._ouverture_v_0(args) -> alias(args)
+    object_HASH._ouverture_v_0(args) -> alias(args)
 
     Args:
-        func_hash: Function hash to load
+        func_hash: Actual function hash (without object_ prefix) to load
         lang: Language code
         namespace: Dictionary to populate with loaded functions
         loaded: Set of already loaded hashes (to avoid cycles)
@@ -1387,8 +1438,9 @@ def dependencies_load_recursive(func_hash: str, lang: str, namespace: dict, load
         loaded = set()
 
     if func_hash in loaded:
-        # Already loaded, return the existing module
-        return namespace.get(func_hash)
+        # Already loaded, return the existing module (stored with prefix)
+        prefixed_name = OUVERTURE_IMPORT_PREFIX + func_hash
+        return namespace.get(prefixed_name)
 
     loaded.add(func_hash)
 
@@ -1399,7 +1451,7 @@ def dependencies_load_recursive(func_hash: str, lang: str, namespace: dict, load
         print(f"Error: Could not load dependency {func_hash}@{lang}", file=sys.stderr)
         sys.exit(1)
 
-    # First, recursively load all dependencies
+    # First, recursively load all dependencies (deps are actual hashes without prefix)
     deps = dependencies_extract(normalized_code)
     for dep_hash in deps:
         dependencies_load_recursive(dep_hash, lang, namespace, loaded)
@@ -1412,10 +1464,12 @@ def dependencies_load_recursive(func_hash: str, lang: str, namespace: dict, load
     executable_code = code_strip_ouverture_imports(original_code)
 
     # For each alias in alias_mapping, add the dependency function to namespace with that name
+    # alias_mapping maps actual_hash -> alias
     for dep_hash, alias in alias_mapping.items():
-        if dep_hash in namespace:
+        prefixed_dep_name = OUVERTURE_IMPORT_PREFIX + dep_hash
+        if prefixed_dep_name in namespace:
             # The dependency's function is already loaded, make alias point to it
-            dep_module = namespace[dep_hash]
+            dep_module = namespace[prefixed_dep_name]
             if hasattr(dep_module, '_ouverture_v_0'):
                 namespace[alias] = dep_module._ouverture_v_0
 
@@ -1433,12 +1487,14 @@ def dependencies_load_recursive(func_hash: str, lang: str, namespace: dict, load
 
     if func_name in namespace:
         # Create a simple namespace object that has _ouverture_v_0 attribute
+        # Store it under the prefixed name (object_<hash>) for lookup
         class OuvertureModule:
             pass
 
         module = OuvertureModule()
         module._ouverture_v_0 = namespace[func_name]
-        namespace[func_hash] = module
+        prefixed_name = OUVERTURE_IMPORT_PREFIX + func_hash
+        namespace[prefixed_name] = module
 
     return namespace.get(func_name)
 
@@ -1507,10 +1563,12 @@ def command_run(hash_with_lang: str, debug: bool = False, func_args: list = None
     executable_code = code_strip_ouverture_imports(original_code)
 
     # For each alias in alias_mapping, add the dependency function to namespace with that name
+    # alias_mapping maps actual_hash (without prefix) -> alias
     for dep_hash, alias in alias_mapping.items():
-        if dep_hash in namespace:
+        prefixed_dep_name = OUVERTURE_IMPORT_PREFIX + dep_hash
+        if prefixed_dep_name in namespace:
             # The dependency's function is already loaded, make alias point to it
-            dep_module = namespace[dep_hash]
+            dep_module = namespace[prefixed_dep_name]
             if hasattr(dep_module, '_ouverture_v_0'):
                 namespace[alias] = dep_module._ouverture_v_0
 
@@ -2131,6 +2189,55 @@ def function_get(hash_with_lang: str):
     print(original_code)
 
 
+def code_migrate_add_object_prefix(normalized_code: str) -> str:
+    """
+    Migrate normalized code from v0 format (no object_ prefix) to v1 format (with object_ prefix).
+
+    Transforms:
+    - from ouverture.pool import c0ff33 -> from ouverture.pool import object_c0ff33
+    - c0ff33._ouverture_v_0(...) -> object_c0ff33._ouverture_v_0(...)
+
+    Args:
+        normalized_code: Normalized code in v0 format (imports without object_ prefix)
+
+    Returns:
+        Migrated code with object_ prefix added to ouverture imports and calls
+    """
+    tree = ast.parse(normalized_code)
+
+    class PrefixAdder(ast.NodeTransformer):
+        def visit_ImportFrom(self, node):
+            if node.module == 'ouverture.pool':
+                # Add object_ prefix to import names
+                new_names = []
+                for alias in node.names:
+                    # Only add prefix if not already present
+                    if not alias.name.startswith(OUVERTURE_IMPORT_PREFIX):
+                        new_name = OUVERTURE_IMPORT_PREFIX + alias.name
+                    else:
+                        new_name = alias.name
+                    new_names.append(ast.alias(name=new_name, asname=alias.asname))
+                node.names = new_names
+            return node
+
+        def visit_Attribute(self, node):
+            # Transform hash._ouverture_v_0 -> object_hash._ouverture_v_0
+            if (isinstance(node.value, ast.Name) and
+                node.attr == '_ouverture_v_0' and
+                not node.value.id.startswith(OUVERTURE_IMPORT_PREFIX)):
+                # Check if this looks like a hash (64 hex chars or at least looks like one)
+                # Add object_ prefix
+                node.value.id = OUVERTURE_IMPORT_PREFIX + node.value.id
+            self.generic_visit(node)
+            return node
+
+    transformer = PrefixAdder()
+    tree = transformer.visit(tree)
+    ast.fix_missing_locations(tree)
+
+    return ast.unparse(tree)
+
+
 def schema_migrate_function_v0_to_v1(func_hash: str, keep_v0: bool = False):
     """
     Migrate a single function from schema v0 to v1.
@@ -2157,14 +2264,15 @@ def schema_migrate_function_v0_to_v1(func_hash: str, keep_v0: bool = False):
         print(f"Error: Failed to load v0 data: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Extract normalized code
+    # Extract normalized code and migrate to add object_ prefix
     normalized_code = v0_data['normalized_code']
+    migrated_code = code_migrate_add_object_prefix(normalized_code)
 
     # Create metadata for v1
     metadata = metadata_create()
 
-    # Save function in v1 format (object.json only)
-    function_save_v1(func_hash, normalized_code, metadata)
+    # Save function in v1 format (object.json only) with migrated code
+    function_save_v1(func_hash, migrated_code, metadata)
 
     # Migrate each language mapping
     for lang in v0_data.get('name_mappings', {}).keys():
