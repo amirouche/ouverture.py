@@ -439,7 +439,6 @@ def metadata_create() -> Dict[str, any]:
     Generates metadata with:
     - created: ISO 8601 timestamp
     - author: Username from environment (USER or USERNAME)
-    - tags: Empty list
 
     Returns:
         Dictionary with metadata fields
@@ -454,8 +453,7 @@ def metadata_create() -> Dict[str, any]:
 
     return {
         'created': timestamp,
-        'author': author,
-        'tags': []
+        'author': author
     }
 
 
@@ -630,7 +628,7 @@ def function_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, 
     Args:
         hash_value: Function hash (64-character hex)
         normalized_code: Normalized code with docstring
-        metadata: Metadata dict (created, author, tags)
+        metadata: Metadata dict (created, author)
     """
     pool_dir = directory_get_pool()
 
@@ -645,7 +643,6 @@ def function_save_v1(hash_value: str, normalized_code: str, metadata: Dict[str, 
         'schema_version': 1,
         'hash': hash_value,
         'normalized_code': normalized_code,
-        'related': [],
         'metadata': metadata
     }
 
@@ -2079,7 +2076,7 @@ def function_load_v1(hash_value: str) -> Dict[str, any]:
         hash_value: Function hash (64-character hex)
 
     Returns:
-        Dictionary with schema_version, hash, normalized_code, related, metadata
+        Dictionary with schema_version, hash, normalized_code, metadata
     """
     pool_dir = directory_get_pool()
 
@@ -2403,7 +2400,7 @@ def schema_validate_v1(func_hash: str) -> tuple:
             func_data = json.load(f)
 
         # Check required fields
-        required_fields = ['schema_version', 'hash', 'normalized_code', 'related', 'metadata']
+        required_fields = ['schema_version', 'hash', 'normalized_code', 'metadata']
         for field in required_fields:
             if field not in func_data:
                 errors.append(f"Missing required field in object.json: {field}")

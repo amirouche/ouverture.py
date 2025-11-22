@@ -158,7 +158,6 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 **Generates default metadata for functions** (Schema v1)
 - ISO 8601 timestamp (`created` field)
 - Author from environment (USER or USERNAME)
-- Empty `tags` list
 - Returns: Dictionary with metadata structure
 - Used when saving functions to v1 format
 
@@ -184,7 +183,7 @@ $HOME/.local/mobius/pool/          # Default location (or $MOBIUS_DIRECTORY/pool
 - Accepts optional comment parameter for mapping variant identification
 - **This is the default save function** - all new code uses v1 format
 
-#### `function_load_v1(hash_value)` (lines 816-848)
+#### `function_load_v1(hash_value)` (lines 2072-2100)
 **Loads function from pool using schema v1**
 - Reads object.json: `$MOBIUS_DIRECTORY/pool/sha256/XX/YYYYYY.../object.json`
 - Returns: Dictionary with schema_version, hash, normalized_code, metadata
@@ -255,14 +254,9 @@ $MOBIUS_DIRECTORY/pool/            # Default: $HOME/.local/mobius/pool/
   "schema_version": 1,
   "hash": "abc123...",
   "normalized_code": "def _mobius_v_0(...):\n    ...",
-  "related": [
-    {"label": "documentation", "hash": "def456..."},
-    {"label": "test", "hash": "ghi789..."}
-  ],
   "metadata": {
     "created": "2025-11-21T10:00:00Z",
-    "author": "username",
-    "tags": ["math", "statistics"]
+    "author": "username"
   }
 }
 ```
@@ -282,8 +276,7 @@ Key features:
 - Multiple mappings per language via multiple mapping.json files
 - Content-addressed mapping storage (deduplicated across functions)
 - No duplication between object.json and mapping.json
-- Extensible metadata (author, timestamp, tags)
-- Related objects support for linked functions
+- Extensible metadata (author, timestamp)
 
 ## Development Conventions
 
@@ -614,7 +607,6 @@ stored = {
     "schema_version": 1,
     "hash": hash_value,
     "normalized_code": "def _mobius_v_0(...):\n    \"\"\"Docstring...\"\"\"\n    ...",
-    "related": [],
     "metadata": {...}
 }
 # Hash of stored JSON ≠ hash_value (hash is of code only)
