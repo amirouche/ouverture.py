@@ -12,7 +12,6 @@
 - `comment`: command to add/view comments on a function hash
 - `html`: command to render pool as static HTML site for browsing
 - `fork`: command to create a modified function with parent lineage tracking
-- `caller`: test, QA, and bulletproof reverse dependency discovery
 - `refactor`: test, QA, and bulletproof hash replacement and integrity checks
 - `compile`: test, QA, and bulletproof build process and dependency bundling
 - `draw`: command to render function output as image (SVG/PNG) for generative art
