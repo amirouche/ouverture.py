@@ -10,36 +10,6 @@ Write functions in your language. Share logic universally. Mobius creates bridge
 
 Mobius is a function pool where the same code written in different human languages produces the same hash.
 
-## The Idea
-
-What if you could write `calculer_somme` in French, `calcular_suma` in Spanish, or `calculate_sum` in English—and they all map to the same function in a shared pool? What if code could be language-agnostic for machines while remaining native for humans?
-
-Mobius is a function pool where **the same logic written in different human languages shares the same hash**. A French developer can write:
-
-```python
-def calculer_moyenne(nombres):
-    """Calcule la moyenne d'une liste de nombres"""
-    return sum(nombres) / len(nombres)
-```
-
-While a Spanish developer writes:
-
-```python
-def calcular_promedio(numeros):
-    """Calcula el promedio de una lista de números"""
-    return sum(numeros) / len(numeros)
-```
-
-And an English developer writes:
-
-```python
-def calculate_average(numbers):
-    """Calculate the average of a list of numbers"""
-    return sum(numbers) / len(numbers)
-```
-
-**These three functions produce the same hash** because they implement identical logic. They're stored together in a content-addressed pool, preserving each language's perspective while recognizing their logical equivalence.
-
 ## How It Works
 
 Mobius normalizes Python functions by:
