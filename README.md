@@ -10,6 +10,28 @@ Write functions in your language. Share logic universally. Mobius creates bridge
 
 Mobius is a function pool where the same code written in different human languages produces the same hash.
 
+## Quick Start
+
+```bash
+git clone https://github.com/amirouche/mobius.py
+cd mobius.py
+
+# View examples
+cat examples/example_simple.py          # English
+cat examples/example_simple_french.py   # French
+cat examples/example_simple_spanish.py  # Spanish
+
+# Add a function to the pool
+python3 mobius.py add examples/example_simple.py@eng
+
+# Get the hash (stored in $HOME/.local/mobius/objects/ by default)
+# Note: Use $MOBIUS_DIRECTORY to customize the location
+find ~/.local/mobius/objects -name "*.json"
+
+# Retrieve in different language
+python3 mobius.py get <HASH>@fra
+```
+
 ## How It Works
 
 Mobius normalizes Python functions by:
@@ -40,25 +62,6 @@ python3 mobius.py get <HASH>@spa  # Returns Spanish version
 **LLM-compatible, human-friendly**: LLMs work with normalized forms while developers work in their native languages. Both perspectives coexist.
 
 **Choice over convention**: You can write in English if you prefer. You can also write in Tagalog, Arabic, or Swahili. The system treats all perspectives as equally valid.
-
-## Quick Start
-
-```bash
-# View examples
-cat examples/example_simple.py          # English
-cat examples/example_simple_french.py   # French
-cat examples/example_simple_spanish.py  # Spanish
-
-# Add a function to the pool
-python3 mobius.py add examples/example_simple.py@eng
-
-# Get the hash (stored in $HOME/.local/mobius/objects/ by default)
-# Note: Use $MOBIUS_DIRECTORY to customize the location
-find ~/.local/mobius/objects -name "*.json"
-
-# Retrieve in different language
-python3 mobius.py get <HASH>@fra
-```
 
 ## Why "Mobius"?
 
