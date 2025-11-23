@@ -40,18 +40,18 @@ def test_compile_nonexistent_function_fails(cli_runner):
 
 
 def test_compile_prepares_bundle(cli_runner, tmp_path):
-    """Test that compile prepares the bundle directory before failing on PyOxidizer"""
+    """Test that compile prepares the bundle directory before failing on Nuitka"""
     # Setup: Add a simple function
     test_file = tmp_path / "simple.py"
     test_file.write_text('def answer(): return 42')
     func_hash = cli_runner.add(str(test_file), 'eng')
 
-    # Test: Run compile (will fail because PyOxidizer not installed)
+    # Test: Run compile (will fail because Nuitka not installed)
     result = cli_runner.run(['compile', f'{func_hash}@eng'])
 
-    # Assert: Should fail on PyOxidizer, not on setup
-    # If it gets to "PyOxidizer not found" or similar, the bundle prep succeeded
-    # This is as far as we can test without installing PyOxidizer
+    # Assert: Should fail on Nuitka, not on setup
+    # If it gets to "Nuitka not found" or similar, the bundle prep succeeded
+    # This is as far as we can test without installing Nuitka
     assert result.returncode != 0
 
 
@@ -269,17 +269,30 @@ def test_dependencies_bundle(mock_bb_dir, tmp_path):
 
 
 # =============================================================================
-# Unit tests for config generation (complex low-level aspect)
+# Unit tests for Nuitka command generation (complex low-level aspect)
 # =============================================================================
 
-def test_compile_generate_config():
-    """Test generating PyOxidizer configuration"""
-    config = bb.compile_generate_config("abc123" + "0" * 58, "eng", "myapp")
+def test_compile_get_nuitka_command_basic():
+    """Test generating basic Nuitka command"""
+    cmd = bb.compile_get_nuitka_command("main.py", "myapp")
 
-    assert "PyOxidizer configuration" in config
-    assert "myapp" in config
-    assert "abc123" in config
-    assert "eng" in config
+    assert cmd[0] == "python3"
+    assert cmd[1] == "-m"
+    assert cmd[2] == "nuitka"
+    assert "--standalone" in cmd
+    assert "--output-filename=myapp" in cmd
+    assert "--onefile" in cmd
+    assert "--quiet" in cmd
+    assert "main.py" in cmd
+
+
+def test_compile_get_nuitka_command_no_onefile():
+    """Test generating Nuitka command without onefile"""
+    cmd = bb.compile_get_nuitka_command("main.py", "myapp", onefile=False)
+
+    assert "--standalone" in cmd
+    assert "--onefile" not in cmd
+    assert "--output-filename=myapp" in cmd
 
 
 def test_compile_generate_runtime(tmp_path):
