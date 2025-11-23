@@ -162,16 +162,18 @@ def test_remote_remove_nonexistent_fails(cli_runner):
 
 def test_remote_pull_file(cli_runner, tmp_path):
     """Test pulling from file:// remote"""
-    # Setup: Create remote pool with a function
+    # Setup: Create remote pool with a function (structure: remote_pool/XX/YYYY.../object.json)
     remote_pool = tmp_path / "remote_pool"
     remote_pool.mkdir()
-    remote_objects = remote_pool / "pool" / "ab"
+    remote_objects = remote_pool / "ab"  # No 'pool' subdirectory - git dir has XX/YYYY structure
     remote_objects.mkdir(parents=True)
 
-    # Create a minimal v1 function
-    func_dir = remote_objects / ("c123" + "0" * 56)
+    # Create a minimal v1 function with all required fields
+    # Hash is 64 hex chars: prefix (2) + rest (62)
+    func_hash = "ab" + "0" * 62  # 64 chars total
+    func_dir = remote_objects / ("0" * 62)  # Directory is remaining 62 chars after prefix
     func_dir.mkdir()
-    (func_dir / "object.json").write_text('{"schema_version": 1, "normalized_code": "def _bb_v_0(): pass"}')
+    (func_dir / "object.json").write_text(f'{{"schema_version": 1, "hash": "{func_hash}", "normalized_code": "def _bb_v_0(): pass", "metadata": {{"created": "2025-01-01T00:00:00Z", "author": "test"}}}}')
 
     # Add remote and pull
     cli_runner.run(['remote', 'add', 'source', f'file://{remote_pool}'])

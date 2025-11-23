@@ -1394,6 +1394,17 @@ def command_remote_pull(name: str):
             print(f"Error: Remote path does not exist: {remote_path}", file=sys.stderr)
             sys.exit(1)
 
+        # Validate remote is a valid bb pool before pulling
+        print("Validating remote pool structure...")
+        is_valid, errors = storage_validate_pool(remote_path)
+        if not is_valid:
+            print(f"Error: Remote is not a valid bb pool:", file=sys.stderr)
+            for err in errors[:5]:  # Show first 5 errors
+                print(f"  - {err}", file=sys.stderr)
+            if len(errors) > 5:
+                print(f"  ... and {len(errors) - 5} more errors", file=sys.stderr)
+            sys.exit(1)
+
         # First copy to git directory, then to pool
         git_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1441,6 +1452,35 @@ def command_remote_pull(name: str):
         if result.returncode != 0:
             print(f"Error: git fetch failed: {result.stderr}", file=sys.stderr)
             sys.exit(1)
+
+        # Determine which branch exists (main or master)
+        remote_branch = None
+        result = git_run(['rev-parse', '--verify', f'{name}/main'], cwd=str(git_dir))
+        if result.returncode == 0:
+            remote_branch = f'{name}/main'
+        else:
+            result = git_run(['rev-parse', '--verify', f'{name}/master'], cwd=str(git_dir))
+            if result.returncode == 0:
+                remote_branch = f'{name}/master'
+
+        if remote_branch:
+            # Validate remote branch content before rebase using temp worktree
+            import tempfile
+            print("Validating remote pool structure...")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir) / 'validate'
+                result = git_run(['worktree', 'add', '--detach', str(temp_path), remote_branch], cwd=str(git_dir))
+                if result.returncode == 0:
+                    is_valid, errors = storage_validate_pool(temp_path)
+                    # Clean up worktree
+                    git_run(['worktree', 'remove', str(temp_path)], cwd=str(git_dir))
+                    if not is_valid:
+                        print(f"Error: Remote is not a valid bb pool:", file=sys.stderr)
+                        for err in errors[:5]:  # Show first 5 errors
+                            print(f"  - {err}", file=sys.stderr)
+                        if len(errors) > 5:
+                            print(f"  ... and {len(errors) - 5} more errors", file=sys.stderr)
+                        sys.exit(1)
 
         # Rebase onto remote changes (try main, then master)
         # Use rebase since content-addressed storage is append-only with zero conflicts
@@ -1612,6 +1652,35 @@ def command_remote_sync():
         if result.returncode != 0:
             print(f"Warning: Failed to fetch from '{name}': {result.stderr}")
             continue
+
+        # Determine which branch exists (main or master)
+        remote_branch = None
+        result = git_run(['rev-parse', '--verify', f'{name}/main'], cwd=str(git_dir))
+        if result.returncode == 0:
+            remote_branch = f'{name}/main'
+        else:
+            result = git_run(['rev-parse', '--verify', f'{name}/master'], cwd=str(git_dir))
+            if result.returncode == 0:
+                remote_branch = f'{name}/master'
+
+        if remote_branch:
+            # Validate remote branch content before rebase using temp worktree
+            import tempfile
+            print(f"  Validating '{name}' pool structure...")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir) / 'validate'
+                result = git_run(['worktree', 'add', '--detach', str(temp_path), remote_branch], cwd=str(git_dir))
+                if result.returncode == 0:
+                    is_valid, errors = storage_validate_pool(temp_path)
+                    # Clean up worktree
+                    git_run(['worktree', 'remove', str(temp_path)], cwd=str(git_dir))
+                    if not is_valid:
+                        print(f"Warning: Remote '{name}' is not a valid bb pool, skipping:")
+                        for err in errors[:3]:  # Show first 3 errors
+                            print(f"    - {err}")
+                        if len(errors) > 3:
+                            print(f"    ... and {len(errors) - 3} more errors")
+                        continue
 
         # Rebase on remote (try main, then master)
         result = git_run(['rebase', f'{name}/main'], cwd=str(git_dir))
@@ -3084,6 +3153,91 @@ def schema_validate_directory() -> tuple:
 
     is_valid = len(errors) == 0
     return is_valid, errors, stats
+
+
+def storage_validate_pool(pool_path: Path) -> tuple:
+    """
+    Validate a directory as a valid bb pool structure.
+
+    This is a parameterized version of schema_validate_directory that works
+    on any directory path, used to validate remote repositories before sync.
+
+    Handles two cases:
+    - Directory IS a pool (contains XX/YYYY.../object.json)
+    - Directory CONTAINS a 'pool' subdirectory
+
+    Args:
+        pool_path: Path to the directory to validate as a bb pool
+
+    Returns:
+        Tuple of (is_valid, errors) where errors is a list of error messages
+    """
+    errors = []
+
+    if not pool_path.exists():
+        errors.append(f"Pool path does not exist: {pool_path}")
+        return False, errors
+
+    if not pool_path.is_dir():
+        errors.append(f"Pool path is not a directory: {pool_path}")
+        return False, errors
+
+    # Check for bb pool structure: XX/YYYYYY.../object.json
+    functions_found = 0
+    for prefix_dir in pool_path.iterdir():
+        if not prefix_dir.is_dir():
+            continue
+        # Skip .git directory and other non-hex directories
+        if prefix_dir.name == '.git':
+            continue
+        # Check if it's a 2-char hex prefix
+        if len(prefix_dir.name) != 2:
+            continue  # Skip non-prefix directories silently
+        if not all(c in '0123456789abcdef' for c in prefix_dir.name.lower()):
+            continue  # Skip non-hex directories silently
+
+        for func_dir in prefix_dir.iterdir():
+            if not func_dir.is_dir():
+                continue
+
+            # Reconstruct and validate hash
+            func_hash = prefix_dir.name + func_dir.name
+            if len(func_hash) != 64:
+                errors.append(f"Invalid hash length in {prefix_dir.name}/{func_dir.name}")
+                continue
+            if not all(c in '0123456789abcdef' for c in func_hash.lower()):
+                errors.append(f"Invalid hash format: {func_hash}")
+                continue
+
+            # Check object.json exists and is valid
+            object_json = func_dir / 'object.json'
+            if not object_json.exists():
+                errors.append(f"Missing object.json for {func_hash[:12]}...")
+                continue
+
+            try:
+                with open(object_json, 'r', encoding='utf-8') as f:
+                    func_data = json.load(f)
+
+                # Check required fields
+                required_fields = ['schema_version', 'hash', 'normalized_code', 'metadata']
+                for field in required_fields:
+                    if field not in func_data:
+                        errors.append(f"Missing field '{field}' in {func_hash[:12]}...")
+
+                if func_data.get('schema_version') != 1:
+                    errors.append(f"Invalid schema version in {func_hash[:12]}...")
+
+            except (IOError, json.JSONDecodeError) as e:
+                errors.append(f"Invalid JSON in {func_hash[:12]}...: {e}")
+                continue
+
+            functions_found += 1
+
+    # A valid pool should have at least some structure or be empty
+    # Empty pools are valid (nothing to pull)
+    is_valid = len(errors) == 0
+    return is_valid, errors
 
 
 def command_caller(hash_value: str):
