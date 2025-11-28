@@ -371,13 +371,13 @@ def db_query(conn: sqlite3.Connection, key: bytes, other: bytes, offset: int = 0
     return [(row[0], row[1]) for row in cursor]
 
 
-### ERDOS INDICES COMPUTATION ###
+### NSTORE INDICES COMPUTATION ###
 # Compute minimal permutation indices for n-tuple store querying
 # Based on Dilworth's theorem: covering boolean lattice by minimal number of maximal chains
 # The result has cardinality equal to the central binomial coefficient C(n, n//2)
 
 
-def erdos_indices_verify_coverage(indices: List[List[int]], n: int) -> bool:
+def nstore_indices_verify_coverage(indices: List[List[int]], n: int) -> bool:
     """Verify that indices cover all possible query patterns.
 
     Args:
@@ -404,7 +404,7 @@ def erdos_indices_verify_coverage(indices: List[List[int]], n: int) -> bool:
     return True
 
 
-def erdos_indices(n: int) -> List[List[int]]:
+def nstore_indices(n: int) -> List[List[int]]:
     """Compute minimal set of permutation indices for n-tuple store.
 
     This algorithm determines which permuted indices to maintain in the database
@@ -424,9 +424,9 @@ def erdos_indices(n: int) -> List[List[int]]:
         Exactly C(n, n//2) index permutations in lexicographic order
 
     Example:
-        >>> erdos_indices(3)  # C(3, 1) = 3 indices
+        >>> nstore_indices(3)  # C(3, 1) = 3 indices
         [[0, 1, 2], [1, 2, 0], [2, 0, 1]]
-        >>> erdos_indices(4)  # C(4, 2) = 6 indices
+        >>> nstore_indices(4)  # C(4, 2) = 6 indices
         [[0, 1, 2, 3], [1, 2, 3, 0], [2, 0, 3, 1], [3, 0, 1, 2], [3, 1, 2, 0], [3, 2, 0, 1]]
     """
     tab = list(range(n))
@@ -457,7 +457,7 @@ def erdos_indices(n: int) -> List[List[int]]:
     out.sort()
 
     # Verify coverage
-    assert erdos_indices_verify_coverage(out, n), "Generated indices do not cover all combinations"
+    assert nstore_indices_verify_coverage(out, n), "Generated indices do not cover all combinations"
 
     return out
 
@@ -483,7 +483,7 @@ def nstore_create(prefix: Tuple, n: int) -> NStore:
     Returns:
         NStore instance
     """
-    indices = erdos_indices(n)
+    indices = nstore_indices(n)
     return NStore(
         prefix=prefix,
         n=n,
