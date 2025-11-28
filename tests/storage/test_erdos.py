@@ -1,7 +1,7 @@
 """
-Tests for erdos_indices computation.
+Tests for nstore_indices computation.
 
-Tests the Erdős indices algorithm for generating minimal permutation sets
+Tests the nstore indices algorithm for generating minimal permutation sets
 that cover all possible query patterns.
 
 Mathematical Foundation:
@@ -9,17 +9,17 @@ Mathematical Foundation:
     of maximal chains. The minimal number equals the cardinality of the maximal
     antichain in the boolean lattice, which is the central binomial coefficient C(n, n//2).
 
-IMPORTANT: The length of erdos_indices(n) always equals the central binomial
+IMPORTANT: The length of nstore_indices(n) always equals the central binomial
 coefficient C(n, n//2), which is the number of ways to choose n//2 items from n.
 """
 import pytest
 import math
 
-from bb import erdos_indices
+from bb import nstore_indices
 
 
-def test_erdos_indices_central_binomial_coefficient():
-    """Test that erdos_indices length equals central binomial coefficient C(n, n//2)"""
+def test_nstore_indices_central_binomial_coefficient():
+    """Test that nstore_indices length equals central binomial coefficient C(n, n//2)"""
     # Test for multiple values of n
     test_cases = [
         (3, math.comb(3, 1)),  # C(3, 1) = 3
@@ -29,48 +29,48 @@ def test_erdos_indices_central_binomial_coefficient():
     ]
 
     for n, expected_count in test_cases:
-        indices = erdos_indices(n)
+        indices = nstore_indices(n)
         assert len(indices) == expected_count, \
             f"For n={n}, expected {expected_count} indices (C({n}, {n//2})), got {len(indices)}"
 
 
-def test_erdos_indices_n4_count():
-    """Test that erdos_indices for n=4 generates correct number of indices"""
-    indices = erdos_indices(4)
+def test_nstore_indices_n4_count():
+    """Test that nstore_indices for n=4 generates correct number of indices"""
+    indices = nstore_indices(4)
 
     # For n=4, we expect C(4, 2) = 6 indices (central binomial coefficient)
     assert len(indices) == 6
     assert len(indices) == math.comb(4, 2)
 
 
-def test_erdos_indices_n4_length():
-    """Test that erdos_indices for n=4 generates indices of correct length"""
-    indices = erdos_indices(4)
+def test_nstore_indices_n4_length():
+    """Test that nstore_indices for n=4 generates indices of correct length"""
+    indices = nstore_indices(4)
 
     # Each index should have length 4
     for index in indices:
         assert len(index) == 4
 
 
-def test_erdos_indices_n4_contains_all_positions():
+def test_nstore_indices_n4_contains_all_positions():
     """Test that each index contains all positions 0-3"""
-    indices = erdos_indices(4)
+    indices = nstore_indices(4)
 
     for index in indices:
         assert set(index) == {0, 1, 2, 3}
 
 
-def test_erdos_indices_n4_sorted():
+def test_nstore_indices_n4_sorted():
     """Test that indices are returned in sorted order"""
-    indices = erdos_indices(4)
+    indices = nstore_indices(4)
 
     # Indices should be sorted lexicographically
     assert indices == sorted(indices)
 
 
-def test_erdos_indices_n4_specific_indices():
-    """Test that erdos_indices for n=4 generates expected indices"""
-    indices = erdos_indices(4)
+def test_nstore_indices_n4_specific_indices():
+    """Test that nstore_indices for n=4 generates expected indices"""
+    indices = nstore_indices(4)
 
     # Based on the algorithm, these are the expected indices for n=4
     expected = [
@@ -85,45 +85,45 @@ def test_erdos_indices_n4_specific_indices():
     assert indices == expected
 
 
-def test_erdos_indices_n5_count():
-    """Test that erdos_indices for n=5 generates correct number of indices"""
-    indices = erdos_indices(5)
+def test_nstore_indices_n5_count():
+    """Test that nstore_indices for n=5 generates correct number of indices"""
+    indices = nstore_indices(5)
 
     # For n=5, we expect C(5, 2) = 10 indices (central binomial coefficient)
     assert len(indices) == 10
     assert len(indices) == math.comb(5, 2)
 
 
-def test_erdos_indices_n5_length():
-    """Test that erdos_indices for n=5 generates indices of correct length"""
-    indices = erdos_indices(5)
+def test_nstore_indices_n5_length():
+    """Test that nstore_indices for n=5 generates indices of correct length"""
+    indices = nstore_indices(5)
 
     # Each index should have length 5
     for index in indices:
         assert len(index) == 5
 
 
-def test_erdos_indices_n5_contains_all_positions():
+def test_nstore_indices_n5_contains_all_positions():
     """Test that each index contains all positions 0-4"""
-    indices = erdos_indices(5)
+    indices = nstore_indices(5)
 
     for index in indices:
         assert set(index) == {0, 1, 2, 3, 4}
 
 
-def test_erdos_indices_n5_sorted():
+def test_nstore_indices_n5_sorted():
     """Test that indices are returned in sorted order"""
-    indices = erdos_indices(5)
+    indices = nstore_indices(5)
 
     # Indices should be sorted lexicographically
     assert indices == sorted(indices)
 
 
-def test_erdos_indices_n5_coverage():
-    """Test that erdos_indices for n=5 covers all query patterns"""
+def test_nstore_indices_n5_coverage():
+    """Test that nstore_indices for n=5 covers all query patterns"""
     import itertools
 
-    indices = erdos_indices(5)
+    indices = nstore_indices(5)
     tab = list(range(5))
 
     # Check all possible combinations
@@ -142,9 +142,9 @@ def test_erdos_indices_n5_coverage():
             assert covered, f"Combination {combination} not covered by any index"
 
 
-def test_erdos_indices_n5_specific_first_index():
+def test_nstore_indices_n5_specific_first_index():
     """Test that first index for n=5 is identity permutation"""
-    indices = erdos_indices(5)
+    indices = nstore_indices(5)
 
     # First index should be [0, 1, 2, 3, 4]
     assert indices[0] == [0, 1, 2, 3, 4]
